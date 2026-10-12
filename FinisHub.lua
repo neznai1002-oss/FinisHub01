@@ -1,5 +1,5 @@
 -- Подпишитесь на канал Tg: @Finis_Paralich4
-print("[Finis] load v5")
+print("[Finis] load v5.1")
 
 local P=game:GetService("Players")
 local U=game:GetService("UserInputService")
@@ -11,7 +11,13 @@ local CP=game:GetService("ContentProvider")
 local SS=game:GetService("SoundService")
 local LP=P.LocalPlayer
 
+-- =========================================================
+-- IDs
+-- =========================================================
+local DECAL_ID="rbxassetid://108600815593933"
+local TEXTURE_ID="rbxassetid://134327784464327"
 local GUN_SOUND_ID="rbxassetid://134013251757271"
+local LOGO_ID=DECAL_ID
 
 -- =========================================================
 -- STATE
@@ -64,10 +70,6 @@ local function isEnemy(p)
 	return true
 end
 
-local DECAL_ID="rbxassetid://108600815593933"
-local TEXTURE_ID="rbxassetid://134327784464327"
-local LOGO_ID=DECAL_ID
-
 local PG
 pcall(function() if gethui then PG=gethui() end end)
 if not PG then PG=LP:WaitForChild("PlayerGui") end
@@ -80,6 +82,7 @@ local function cam() return W.CurrentCamera end
 
 task.spawn(function() pcall(function() CP:PreloadAsync({DECAL_ID,TEXTURE_ID,GUN_SOUND_ID}) end) end)
 
+-- логотип fallback
 task.spawn(function()
 	task.wait(0.8)
 	local d=Instance.new("ImageLabel") d.Image=DECAL_ID
@@ -88,8 +91,8 @@ task.spawn(function()
 	while os.clock()-t0<4 do if d.IsLoaded or tx.IsLoaded then break end task.wait(0.1) end
 	local useTx=false
 	if d.IsLoaded then print("[Finis] decal OK")
-	elseif tx.IsLoaded then useTx=true LOGO_ID=TEXTURE_ID
-	else useTx=true LOGO_ID=TEXTURE_ID end
+	elseif tx.IsLoaded then useTx=true LOGO_ID=TEXTURE_ID print("[Finis] texture")
+	else useTx=true LOGO_ID=TEXTURE_ID print("[Finis] none") end
 	d:Destroy() tx:Destroy()
 	if useTx then
 		for _,o in ipairs(PG:GetDescendants()) do
@@ -103,19 +106,54 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- GUN SOUND
+-- GUN SOUND — правильная загрузка
 -- =========================================================
 local gunSound=Instance.new("Sound")
 gunSound.Name="FinisGunSound"
 gunSound.SoundId=GUN_SOUND_ID
-gunSound.Volume=0.8
+gunSound.Volume=1
+gunSound.Looped=false
 gunSound.Parent=SS
+
+task.spawn(function()
+	local t0=os.clock()
+	while not gunSound.IsLoaded and os.clock()-t0<6 do
+		task.wait(0.1)
+	end
+	if gunSound.IsLoaded then
+		print("[Finis] gun sound loaded OK")
+	else
+		warn("[Finis] gun sound FAILED to load")
+	end
+end)
+
+-- retry если не загрузилось
+task.spawn(function()
+	local fails=0
+	while G and G.Parent and fails<5 do
+		task.wait(3)
+		if not gunSound.IsLoaded then
+			fails=fails+1
+			pcall(function()
+				gunSound.SoundId=""
+				task.wait(0.1)
+				gunSound.SoundId=GUN_SOUND_ID
+			end)
+		end
+	end
+end)
+
 local lastSoundPlay=0
 local function playGunSound()
 	if not CB.gunSound then return end
-	if os.clock()-lastSoundPlay<0.05 then return end
+	if not gunSound.IsLoaded then return end
+	if os.clock()-lastSoundPlay<0.06 then return end
 	lastSoundPlay=os.clock()
-	gunSound:Play()
+	pcall(function()
+		if gunSound.IsPlaying then gunSound:Stop() end
+		gunSound.TimePosition=0
+		gunSound:Play()
+	end)
 end
 
 -- палитра
@@ -176,7 +214,7 @@ local G=mk("ScreenGui",{Name="FinisHub",ResetOnSpawn=false,IgnoreGuiInset=true,
 	DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},PG)
 
 -- =========================================================
--- INTRO (палочки меньше + свечение)
+-- INTRO
 -- =========================================================
 local introDone=false
 local function endIntro()
@@ -207,10 +245,8 @@ pcall(function()
 		Image=LOGO_ID,ImageColor3=WT,ImageTransparency=0,ScaleType=Enum.ScaleType.Fit,ZIndex=5010},CX)
 	local IntroLogoScale=mk("UIScale",{Scale=0.3},IntroLogo)
 
-	-- палочки МЕНЬШЕ и ТОНЬШЕ + свечение
 	local HB=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.4,0),
 		Size=UDim2.fromOffset(170,45),BackgroundTransparency=1,ZIndex=5006},CX)
-	-- новая форма палочек — компактнее (x сжат с 240 до 170)
 	local PTS={{8,22},{54,22},{64,31},{74,5},{86,22},{162,22}}
 	local hbSegs={}
 	for i=1,#PTS-1 do
@@ -220,23 +256,11 @@ pcall(function()
 		local ang=math.deg(math.atan2(dy,dx))
 		local cx=(p1[1]+p2[1])*0.5
 		local cy=(p1[2]+p2[2])*0.5
-		local s=mk("Frame",{
-			AnchorPoint=Vector2.new(0.5,0.5),
-			Position=UDim2.fromOffset(cx,cy),
-			Size=UDim2.fromOffset(0,1.5),
-			BackgroundColor3=WT,
-			BackgroundTransparency=1,
-			BorderSizePixel=0,
-			Rotation=ang,
-			ZIndex=5007,
-		},HB)
+		local s=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),
+			Position=UDim2.fromOffset(cx,cy),Size=UDim2.fromOffset(0,1.5),
+			BackgroundColor3=WT,BackgroundTransparency=1,BorderSizePixel=0,Rotation=ang,ZIndex=5007},HB)
 		uc(s,1)
-		-- МЯГКОЕ СВЕЧЕНИЕ
-		local glow=mk("UIStroke",{
-			Color=ACH,
-			Thickness=3,
-			Transparency=1,
-		},s)
+		local glow=mk("UIStroke",{Color=ACH,Thickness=3,Transparency=1},s)
 		table.insert(hbSegs,{f=s,len=len,glow=glow})
 	end
 
@@ -720,7 +744,7 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- KILL FEED (только мои действия, без спама)
+-- KILL FEED
 -- =========================================================
 local KF=mk("Frame",{Name="KillFeed",AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-14,0,140),
 	Size=UDim2.fromOffset(340,340),BackgroundTransparency=1,ZIndex=1050},G)
@@ -737,21 +761,18 @@ local function addKill(title, sub, col)
 	local accent=mk("Frame",{Size=UDim2.fromOffset(3,40),Position=UDim2.fromOffset(8,9),
 		BackgroundColor3=col,BorderSizePixel=0,ZIndex=1052},row)
 	uc(accent,2)
-
 	mk("TextLabel",{Size=UDim2.new(1,-30,0,22),Position=UDim2.fromOffset(18,6),
 		BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text=title,
 		TextColor3=col,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=1052},row)
 	mk("TextLabel",{Size=UDim2.new(1,-30,0,18),Position=UDim2.fromOffset(18,30),
 		BackgroundTransparency=1,Font=Enum.Font.Gotham,Text=sub,
 		TextColor3=TD,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=1052},row)
-
 	local sc=mk("UIScale",{Scale=0.6},row)
 	tw(row,0.5,{BackgroundTransparency=0})
 	tw(sc,TweenInfo.new(0.7,Enum.EasingStyle.Back),{Scale=1})
 	task.delay(4,function()
 		tw(row,0.6,{BackgroundTransparency=1})
 		tw(rowS,0.6,{Transparency=1})
-		tw(sc,0.6,{Transparency=0,},nil)
 		tw(sc,0.6,{Scale=0.6})
 		tw(accent,0.6,{BackgroundTransparency=1})
 		task.wait(0.7)
@@ -759,18 +780,13 @@ local function addKill(title, sub, col)
 	end)
 end
 
--- Отслеживание МОИХ выстрелов
-local recentShots={}   -- наши выстрелы: {t, victim, weapon, damage=0}
+local recentShots={}
 local myKills=0
 local lastHp={}
 
 local function rememberShot(victim, weaponName, distance)
 	table.insert(recentShots, 1, {
-		t=os.clock(),
-		victim=victim,
-		weapon=weaponName,
-		distance=distance,
-		dmg=0,
+		t=os.clock(), victim=victim, weapon=weaponName, distance=distance, dmg=0,
 	})
 	if #recentShots>8 then table.remove(recentShots) end
 end
@@ -778,9 +794,7 @@ end
 local function findRecentShot(victim)
 	local now=os.clock()
 	for _,s in ipairs(recentShots) do
-		if s.victim==victim and now-s.t<1.5 then
-			return s
-		end
+		if s.victim==victim and now-s.t<1.5 then return s end
 	end
 	return nil
 end
@@ -800,31 +814,20 @@ task.spawn(function()
 							if dmg>0 then
 								local shot=findRecentShot(p)
 								if shot then
-									-- это НАШ урон
 									shot.dmg = shot.dmg + dmg
-									-- показываем урон только если включено И урон существенный
 									if CB.dmgMsg and cur>0 and dmg>=5 then
-										addKill(
-											"-"..dmg.."  "..p.Name,
-											shot.weapon.."  •  "..math.floor(shot.distance).." studs",
-										RED)
+										addKill("-"..dmg.."  "..p.Name,
+											shot.weapon.."  •  "..math.floor(shot.distance).." studs", RED)
 									end
-									-- если умер — сообщаем кил
 									if cur<=0 and CB.killMsg then
 										myKills=myKills+1
-										addKill(
-											"KILL  "..p.Name,
-											shot.weapon.."  •  "..math.floor(shot.distance).." studs  •  #"..myKills,
-										GRN)
-										-- очищаем все выстрелы в этого
+										addKill("KILL  "..p.Name,
+											shot.weapon.."  •  "..math.floor(shot.distance).." studs  •  #"..myKills, GRN)
 										for i=#recentShots,1,-1 do
-											if recentShots[i].victim==p then
-												table.remove(recentShots,i)
-											end
+											if recentShots[i].victim==p then table.remove(recentShots,i) end
 										end
 									end
 								end
-								-- если не наш — вообще ничего не показываем (согласно запросу)
 							end
 						end
 						lastHp[p]=cur
@@ -837,7 +840,7 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- ESP v5 (добавлены HP бары)
+-- ESP
 -- =========================================================
 local ESP_STYLES={"Chams","Outline","Both","Skeleton","Corners","Box","All"}
 local ESP_COLORS={
@@ -869,8 +872,7 @@ local function ensureHL(ch)
 end
 
 local function makeCorner(par,name,h,w)
-	local f=mk("Frame",{Name=name,Size=UDim2.fromOffset(w,h),BackgroundColor3=WT,BorderSizePixel=0,Parent=par})
-	return f
+	return mk("Frame",{Name=name,Size=UDim2.fromOffset(w,h),BackgroundColor3=WT,BorderSizePixel=0,Parent=par})
 end
 
 local function ensureCorners(ch)
@@ -947,7 +949,6 @@ local function ensureBox(ch)
 	e.box=gui e.boxLines={t,b,l,r} return gui
 end
 
--- HP BAR — рядом с игроком
 local function ensureHP(ch)
 	local e=espCache[ch]
 	if e and e.hpBar and e.hpBar.Parent then return e.hpBar end
@@ -956,14 +957,9 @@ local function ensureHP(ch)
 	if not hrp then return nil end
 	local bg=Instance.new("BillboardGui")
 	bg.Name="FinisHP" bg.Size=UDim2.new(0,4,0,50)
-	bg.StudsOffsetWorldSpace=Vector3.new(0,0,0)
-	bg.Adornee=hrp
-	bg.AlwaysOnTop=true
-	bg.LightInfluence=0
-	bg.SizeOffset=Vector2.new(0,0)
-	bg.Offset=Vector2.new(-46,0)
-	bg.ResetOnSpawn=false
-	bg.Parent=ch
+	bg.Adornee=hrp bg.AlwaysOnTop=true bg.LightInfluence=0
+	bg.SizeOffset=Vector2.new(0,0) bg.Offset=Vector2.new(-46,0)
+	bg.ResetOnSpawn=false bg.Parent=ch
 	local back=mk("Frame",{Name="Bg",Size=UDim2.new(1,0,1,0),
 		BackgroundColor3=Color3.fromRGB(20,20,22),BackgroundTransparency=0.2,
 		BorderSizePixel=0,Parent=bg})
@@ -972,7 +968,6 @@ local function ensureHP(ch)
 		Position=UDim2.new(0,0,1,0),AnchorPoint=Vector2.new(0,1),
 		BackgroundColor3=GRN,BorderSizePixel=0,Parent=back})
 	uc(fill,2)
-	local outline=sk(back,Color3.fromRGB(0,0,0),1,0.3)
 	if not e then e={} espCache[ch]=e end
 	e.hpBar=bg e.hpFill=fill
 	return bg
@@ -1089,7 +1084,6 @@ local function updateTarget(plr,ch)
 		end
 	elseif e.box then e.box.Enabled=false end
 
-	-- HP bar
 	if vis and CB.espHP then
 		local bg=ensureHP(ch)
 		if bg then
@@ -1138,7 +1132,7 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- TRIANGLE ARROWS
+-- ARROWS
 -- =========================================================
 local arrHolder=nil
 local arrows={}
@@ -1235,7 +1229,7 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- FOV CIRCLE
+-- FOV
 -- =========================================================
 local FOV=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
 	Size=UDim2.fromOffset(280,280),BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=2},G)
@@ -1309,6 +1303,7 @@ task.spawn(function()
 		if ok and res then Controls=res break end
 		task.wait(0.2)
 	end
+	if Controls then print("[Finis] controls OK") else warn("[Finis] controls FAILED") end
 end)
 
 local FS={bv=nil,bg=nil}
@@ -1318,12 +1313,10 @@ local function startFly()
 	local h=ch and ch:FindFirstChildOfClass("Humanoid")
 	if not hr or not h or FS.bv then return end
 	local bv=Instance.new("BodyVelocity")
-	bv.Name="FinisFlyBV"
-	bv.MaxForce=Vector3.new(5e4,5e4,5e4)
+	bv.Name="FinisFlyBV" bv.MaxForce=Vector3.new(5e4,5e4,5e4)
 	bv.P=1e4 bv.Velocity=Vector3.new(0,0,0) bv.Parent=hr
 	local bg=Instance.new("BodyGyro")
-	bg.Name="FinisFlyBG"
-	bg.MaxTorque=Vector3.new(5e5,5e5,5e5)
+	bg.Name="FinisFlyBG" bg.MaxTorque=Vector3.new(5e5,5e5,5e5)
 	bg.P=5e3 bg.D=500 bg.CFrame=hr.CFrame bg.Parent=hr
 	h.PlatformStand=true
 	FS.bv=bv FS.bg=bg
@@ -1478,7 +1471,7 @@ R.RenderStepped:Connect(function()
 	if r>0 then FOV.Size=UDim2.fromOffset(r*2,r*2) end
 end)
 
--- TRACER / FAST SWITCH / AMMO
+-- TRACER / SWITCH / AMMO
 local TRC=Instance.new("Folder")
 TRC.Name="FinisTracers" TRC.Parent=W
 local lastT=0
