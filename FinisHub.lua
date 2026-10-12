@@ -1,5 +1,5 @@
--- Подпишитесь на канал Tg: @Finis_Paralich4
-print("[Finis] load v5.1")
+-- language: Lua, file: finis_hub.lua, target: Roblox executor (synapse-compatible)
+print("[Finis] load v6.1")
 
 local P=game:GetService("Players")
 local U=game:GetService("UserInputService")
@@ -9,6 +9,7 @@ local W=game:GetService("Workspace")
 local SG=game:GetService("StarterGui")
 local CP=game:GetService("ContentProvider")
 local SS=game:GetService("SoundService")
+local Debris=game:GetService("Debris")
 local LP=P.LocalPlayer
 
 -- =========================================================
@@ -22,11 +23,13 @@ local LOGO_ID=DECAL_ID
 -- =========================================================
 -- STATE
 -- =========================================================
+local G -- FIX 1: forward-declare, fallback-цикл ниже видит эту же переменную
+
 local CB={
 	esp=false, espWall=true, espText=true, espCol="Pink", espStyle="Chams",
 	espHP=true,
 	enemy="Auto",
-	arrows=true,
+	arrows=true, arrowRad=165,
 	tb=false, tbFov=140, tbDel=0.35, tbAim=false,
 	tracer=false,
 	gunSound=false,
@@ -41,9 +44,7 @@ local CB={
 	showFov=true,
 }
 
--- =========================================================
--- TEAM
--- =========================================================
+-- TEAM CHECK
 local function getTeamClass(plr)
 	if not plr.Team then return "none" end
 	local n=string.lower(plr.Team.Name)
@@ -59,6 +60,10 @@ end
 local function isEnemy(p)
 	if p==LP then return false end
 	if CB.enemy=="All" then return true end
+	if CB.enemy=="Team" then -- FIX 4: строгая проверка по Roblox-командам
+		if not p.Team or not LP.Team then return true end
+		return p.Team~=LP.Team
+	end
 	local mc=getTeamClass(LP)
 	local tc=getTeamClass(p)
 	if mc~="none" and tc~="none" then return mc~=tc end
@@ -82,79 +87,101 @@ local function cam() return W.CurrentCamera end
 
 task.spawn(function() pcall(function() CP:PreloadAsync({DECAL_ID,TEXTURE_ID,GUN_SOUND_ID}) end) end)
 
--- логотип fallback
+-- FIX 2: реестр логотипов — fallback обновляет уже созданные ImageLabel'ы
+local logoImgs={}
+local function regLogo(im)
+	im.Image=LOGO_ID
+	table.insert(logoImgs,im)
+end
+
+-- LOGO fallback
 task.spawn(function()
 	task.wait(0.8)
 	local d=Instance.new("ImageLabel") d.Image=DECAL_ID
 	local tx=Instance.new("ImageLabel") tx.Image=TEXTURE_ID
 	local t0=os.clock()
 	while os.clock()-t0<4 do if d.IsLoaded or tx.IsLoaded then break end task.wait(0.1) end
-	local useTx=false
-	if d.IsLoaded then print("[Finis] decal OK")
-	elseif tx.IsLoaded then useTx=true LOGO_ID=TEXTURE_ID print("[Finis] texture")
-	else useTx=true LOGO_ID=TEXTURE_ID print("[Finis] none") end
-	d:Destroy() tx:Destroy()
-	if useTx then
-		for _,o in ipairs(PG:GetDescendants()) do
-			pcall(function()
-				if o:IsA("ImageLabel") and (o.Name=="IntroLogo" or o.Name=="PILogo" or o.Name=="HeaderLogo") then
-					o.Image=TEXTURE_ID
-				end
-			end)
+	if d.IsLoaded then
+		print("[Finis] decal OK")
+	elseif tx.IsLoaded then
+		LOGO_ID=TEXTURE_ID print("[Finis] texture")
+	else
+		LOGO_ID=TEXTURE_ID print("[Finis] none")
+	end
+	if not d.IsLoaded then
+		for _,im in ipairs(logoImgs) do
+			pcall(function() im.Image=LOGO_ID end)
 		end
 	end
+	d:Destroy() tx:Destroy()
 end)
 
 -- =========================================================
--- GUN SOUND — правильная загрузка
+-- GUN SOUND — пул клонов
 -- =========================================================
-local gunSound=Instance.new("Sound")
-gunSound.Name="FinisGunSound"
-gunSound.SoundId=GUN_SOUND_ID
-gunSound.Volume=1
-gunSound.Looped=false
-gunSound.Parent=SS
+local soundPool={}
+local soundPoolIdx=1
+local SOUND_POOL_SIZE=8
+
+local gunSoundTemplate=Instance.new("Sound")
+gunSoundTemplate.Name="FinisGunSound"
+gunSoundTemplate.SoundId=GUN_SOUND_ID
+gunSoundTemplate.Volume=3
+gunSoundTemplate.Looped=false
+gunSoundTemplate.Parent=SS
 
 task.spawn(function()
 	local t0=os.clock()
-	while not gunSound.IsLoaded and os.clock()-t0<6 do
-		task.wait(0.1)
-	end
-	if gunSound.IsLoaded then
-		print("[Finis] gun sound loaded OK")
-	else
-		warn("[Finis] gun sound FAILED to load")
-	end
-end)
-
--- retry если не загрузилось
-task.spawn(function()
-	local fails=0
-	while G and G.Parent and fails<5 do
-		task.wait(3)
-		if not gunSound.IsLoaded then
-			fails=fails+1
-			pcall(function()
-				gunSound.SoundId=""
-				task.wait(0.1)
-				gunSound.SoundId=GUN_SOUND_ID
-			end)
+	while not gunSoundTemplate.IsLoaded and os.clock()-t0<10 do task.wait(0.2) end
+	if gunSoundTemplate.IsLoaded then
+		print("[Finis] gun sound READY, length="..string.format("%.3f",gunSoundTemplate.TimeLength).."s")
+		for i=1,SOUND_POOL_SIZE do
+			local c=gunSoundTemplate:Clone()
+			c.Volume=3
+			c.Parent=SS
+			soundPool[i]=c
 		end
+	else
+		warn("[Finis] gun sound NOT LOADED — asset blocked")
 	end
 end)
 
 local lastSoundPlay=0
 local function playGunSound()
 	if not CB.gunSound then return end
-	if not gunSound.IsLoaded then return end
-	if os.clock()-lastSoundPlay<0.06 then return end
+	if not gunSoundTemplate.IsLoaded then return end
+	if os.clock()-lastSoundPlay<0.03 then return end
 	lastSoundPlay=os.clock()
+
+	local s=soundPool[soundPoolIdx]
+	soundPoolIdx=soundPoolIdx+1
+	if soundPoolIdx>SOUND_POOL_SIZE then soundPoolIdx=1 end
+	if not s or not s.Parent then
+		s=gunSoundTemplate:Clone()
+		s.Parent=SS
+	end
 	pcall(function()
-		if gunSound.IsPlaying then gunSound:Stop() end
-		gunSound.TimePosition=0
-		gunSound:Play()
+		s.TimePosition=0
+		s.PlaybackSpeed=0.95+math.random()*0.1
+		s:Play()
 	end)
 end
+
+-- FIX 1: теперь G объявлен наверху — цикл живой
+task.spawn(function()
+	local tries=0
+	while G and G.Parent and tries<6 do
+		task.wait(3)
+		if not gunSoundTemplate.IsLoaded then
+			tries=tries+1
+			pcall(function()
+				gunSoundTemplate.SoundId=""
+				task.wait(0.1)
+				gunSoundTemplate.SoundId=GUN_SOUND_ID
+			end)
+		end
+	end
+end)
 
 -- палитра
 local BG=Color3.fromRGB(10,10,13) local CD=Color3.fromRGB(21,21,25)
@@ -178,12 +205,12 @@ local LS={
 		tg_en="Auto-shoot",tg_fov="FOV",tg_delay="Delay",tg_aim="Lock camera",
 		sp_en="Spin",sp_speed="Speed",
 		esp_en="Enable ESP",esp_wall="Wallhack",esp_txt="Distance text",esp_col="Color",
-		esp_style="Style",esp_enemy="Target mode",esp_arrows="Arrows",esp_hp="HP bar",
+		esp_style="Style",esp_enemy="Target mode",esp_arrows="Arrows",esp_hp="HP bar",esp_arad="Arrow radius",
 		tr_en="Tracer",
 		kf_kill="Kill messages",kf_dmg="Damage messages",
 		snd_en="Custom shot sound",
 		ms_en="Speed hack",ms_val="Value",nc_en="Noclip",aj_en="Air jump",
-		fl_en="Fly",fl_spd="Speed",fl_mode="Mode",
+		fl_en="Fly",fl_spd="Speed",fl_mode="Mode",fl_cam="Camera",fl_vert="Vertical",
 		ch_en="Car hack",ch_spd="Max speed",
 		am_en="Ammo",nr_en="No reload",fs_en="Auto switch",fs_delay="Delay",
 		ui_scale="Menu scale",fov_circle="FOV circle",
@@ -195,12 +222,12 @@ local LS={
 		tg_en="Авто-выстрел",tg_fov="FOV",tg_delay="Задержка",tg_aim="Крутить камеру",
 		sp_en="Спин",sp_speed="Скорость",
 		esp_en="Включить ESP",esp_wall="Сквозь стены",esp_txt="Дистанция",esp_col="Цвет",
-		esp_style="Стиль",esp_enemy="Режим",esp_arrows="Стрелки",esp_hp="HP полоска",
+		esp_style="Стиль",esp_enemy="Режим",esp_arrows="Стрелки",esp_hp="HP полоска",esp_arad="Радиус стрелок",
 		tr_en="Трассер",
 		kf_kill="Убийства",kf_dmg="Урон",
 		snd_en="Свой звук выстрела",
 		ms_en="Скорость",ms_val="Значение",nc_en="Сквозь стены",aj_en="Прыжок",
-		fl_en="Полёт",fl_spd="Скорость",fl_mode="Режим",
+		fl_en="Полёт",fl_spd="Скорость",fl_mode="Режим",fl_cam="Камера",fl_vert="Вертикальный",
 		ch_en="Ускорение",ch_spd="Скорость машины",
 		am_en="Патроны",nr_en="Без перезарядки",fs_en="Автосмена",fs_delay="Задержка",
 		ui_scale="Размер меню",fov_circle="FOV круг",
@@ -209,8 +236,9 @@ local LS={
 local function TR(k) local p=LS[Lang] or LS.en return p[k] or k end
 local textReg={}
 local function regText(lbl,key) table.insert(textReg,{lbl=lbl,key=key}) lbl.Text=TR(key) end
+local function dTxt(k) local p=LS[Lang] return (p and p[k]) or k end -- FIX 3: перевод для disp-ключей селекторов
 
-local G=mk("ScreenGui",{Name="FinisHub",ResetOnSpawn=false,IgnoreGuiInset=true,
+G=mk("ScreenGui",{Name="FinisHub",ResetOnSpawn=false,IgnoreGuiInset=true,
 	DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},PG)
 
 -- =========================================================
@@ -242,7 +270,8 @@ pcall(function()
 	local CX=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),Size=UDim2.fromOffset(360,280),BackgroundTransparency=1,ZIndex=5005},OV)
 	local IntroLogo=mk("ImageLabel",{Name="IntroLogo",AnchorPoint=Vector2.new(0.5,0.5),
 		Position=UDim2.new(0.5,0,0.08,0),Size=UDim2.fromOffset(110,110),BackgroundTransparency=1,
-		Image=LOGO_ID,ImageColor3=WT,ImageTransparency=0,ScaleType=Enum.ScaleType.Fit,ZIndex=5010},CX)
+		ImageColor3=WT,ImageTransparency=0,ScaleType=Enum.ScaleType.Fit,ZIndex=5010},CX)
+	regLogo(IntroLogo) -- FIX 2
 	local IntroLogoScale=mk("UIScale",{Scale=0.3},IntroLogo)
 
 	local HB=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.4,0),
@@ -423,8 +452,9 @@ task.spawn(function()
 end)
 
 local TOP=mk("Frame",{Size=UDim2.new(1,0,0,50),BackgroundTransparency=1,ZIndex=901},MENU)
-mk("ImageLabel",{Name="HeaderLogo",Size=UDim2.fromOffset(32,32),Position=UDim2.fromOffset(14,9),
-	BackgroundTransparency=1,Image=LOGO_ID,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=902},TOP)
+local HeaderLogo=mk("ImageLabel",{Name="HeaderLogo",Size=UDim2.fromOffset(32,32),Position=UDim2.fromOffset(14,9),
+	BackgroundTransparency=1,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=902},TOP)
+regLogo(HeaderLogo) -- FIX 2
 mk("TextLabel",{Size=UDim2.fromOffset(60,18),Position=UDim2.fromOffset(52,16),BackgroundTransparency=1,
 	Font=Enum.Font.GothamBold,Text="Finis",TextColor3=TX,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=902},TOP)
 local lblInt=mk("TextLabel",{Size=UDim2.fromOffset(90,18),Position=UDim2.fromOffset(90,16),BackgroundTransparency=1,
@@ -613,14 +643,14 @@ local function addSelector(p,o,tkey,opts,disp,di,cb)
 		BackgroundColor3=Color3.fromRGB(30,30,36),BorderSizePixel=0,ZIndex=905},r)
 	uc(bx,6) sk(bx,BD,1,0.2)
 	local vL=mk("TextLabel",{Size=UDim2.new(1,-24,1,0),Position=UDim2.fromOffset(8,0),BackgroundTransparency=1,
-		Font=Enum.Font.Gotham,Text=tostring(disp[di] or disp[1]),TextColor3=TX,TextSize=12,
+		Font=Enum.Font.Gotham,Text=dTxt(disp[di] or disp[1]),TextColor3=TX,TextSize=12, -- FIX 3: перевод disp-ключей
 		TextXAlignment=Enum.TextXAlignment.Left,ZIndex=906},bx)
 	local ar=mk("TextLabel",{Size=UDim2.fromOffset(20,20),Position=UDim2.new(1,-22,0.5,-10),BackgroundTransparency=1,
 		Font=Enum.Font.GothamBold,Text="v",TextColor3=TD,TextSize=12,ZIndex=906},bx)
 	local i=di or 1
 	local function ap(n,sil)
 		i=((n-1)%#opts)+1
-		vL.Text=tostring(disp[i])
+		vL.Text=dTxt(disp[i]) -- FIX 3
 		if not sil and cb then cb(opts[i],i) end
 	end
 	ap(i,true)
@@ -676,7 +706,8 @@ local PH=mk("Frame",{Name="PillHUD",Size=UDim2.fromOffset(250,40),Position=UDim2
 local PB=mk("TextButton",{Size=UDim2.fromScale(1,1),BackgroundColor3=PL,BorderSizePixel=0,Text="",AutoButtonColor=false,ZIndex=1000},PH)
 uc(PB,10) sk(PB,Color3.fromRGB(35,35,45),1,0.1)
 local PILogo=mk("ImageLabel",{Name="PILogo",Size=UDim2.fromOffset(28,28),Position=UDim2.fromOffset(10,6),
-	BackgroundTransparency=1,Image=LOGO_ID,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=1002},PB)
+	BackgroundTransparency=1,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=1002},PB)
+regLogo(PILogo) -- FIX 2
 local PILogoScale=mk("UIScale",{Scale=1},PILogo)
 task.spawn(function()
 	while G and G.Parent and PILogo and PILogo.Parent do
@@ -784,6 +815,11 @@ local recentShots={}
 local myKills=0
 local lastHp={}
 
+-- FIX: чистка lastHp при выходе игрока
+P.PlayerRemoving:Connect(function(p)
+	lastHp[p]=nil
+end)
+
 local function rememberShot(victim, weaponName, distance)
 	table.insert(recentShots, 1, {
 		t=os.clock(), victim=victim, weapon=weaponName, distance=distance, dmg=0,
@@ -794,7 +830,7 @@ end
 local function findRecentShot(victim)
 	local now=os.clock()
 	for _,s in ipairs(recentShots) do
-		if s.victim==victim and now-s.t<1.5 then return s end
+		if s.victim==victim and now-s.t<0.8 then return s end -- FIX: окно 1.5s -> 0.8s
 	end
 	return nil
 end
@@ -819,7 +855,7 @@ task.spawn(function()
 										addKill("-"..dmg.."  "..p.Name,
 											shot.weapon.."  •  "..math.floor(shot.distance).." studs", RED)
 									end
-									if cur<=0 and CB.killMsg then
+									if cur<=0 and CB.killMsg and shot.dmg>=10 then -- FIX: килл только если наш урон >=10
 										myKills=myKills+1
 										addKill("KILL  "..p.Name,
 											shot.weapon.."  •  "..math.floor(shot.distance).." studs  •  #"..myKills, GRN)
@@ -1090,7 +1126,7 @@ local function updateTarget(plr,ch)
 			bg.Enabled=true
 			if e.hpFill and hum then
 				local ratio=math.clamp(hum.Health/math.max(hum.MaxHealth,100),0,1)
-				tw(e.hpFill,0.15,{Size=UDim2.new(1,0,ratio,0)})
+				e.hpFill.Size=UDim2.new(1,0,ratio,0) -- FIX: прямое присваивание, без спама тwin'ов
 				local hpCol=GRN
 				if ratio<0.3 then hpCol=RED
 				elseif ratio<0.6 then hpCol=ORG
@@ -1131,9 +1167,7 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
 -- ARROWS
--- =========================================================
 local arrHolder=nil
 local arrows={}
 local function ensureArrHolder()
@@ -1177,8 +1211,8 @@ local function updateArrows()
 	end
 	local vp=c.ViewportSize
 	local center=Vector2.new(vp.X*0.5,vp.Y*0.5)
-	local rad = CB.tbFov + 25
-	if rad<100 then rad=100 end
+	local rad=CB.arrowRad -- FIX: свой радиус, не привязан к tbFov
+	if rad<60 then rad=60 end
 	if rad>math.min(vp.X,vp.Y)*0.55 then rad=math.min(vp.X,vp.Y)*0.55 end
 	local off={}
 	for _,p in ipairs(P:GetPlayers()) do
@@ -1228,9 +1262,7 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
 -- FOV
--- =========================================================
 local FOV=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
 	Size=UDim2.fromOffset(280,280),BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=2},G)
 uc(FOV,5000)
@@ -1250,9 +1282,7 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
 -- FUNCTIONS
--- =========================================================
 local function forceNoclip()
 	local ch=LP.Character
 	if not ch or not ch.Parent then return end
@@ -1303,7 +1333,6 @@ task.spawn(function()
 		if ok and res then Controls=res break end
 		task.wait(0.2)
 	end
-	if Controls then print("[Finis] controls OK") else warn("[Finis] controls FAILED") end
 end)
 
 local FS={bv=nil,bg=nil}
@@ -1606,9 +1635,7 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
 -- PAGES
--- =========================================================
 do
 	local p=NP.Visuals
 	addSec(p,1,"sec_esp")
@@ -1618,10 +1645,11 @@ do
 	addToggle(c,3,"esp_txt","",true,function(o) CB.espText=o end)
 	addToggle(c,4,"esp_hp","",true,function(o) CB.espHP=o end)
 	addToggle(c,5,"esp_arrows","",true,function(o) CB.arrows=o end)
-	addSelector(c,6,"esp_col",{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},
+	addSlider(c,6,"esp_arad",60,300,165," px",function(v) CB.arrowRad=math.floor(v+.5) end) -- FIX: отдельный радиус стрелок
+	addSelector(c,7,"esp_col",{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},
 		{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},1,function(v) CB.espCol=v end)
-	addSelector(c,7,"esp_style",ESP_STYLES,ESP_STYLES,1,function(v) CB.espStyle=v end)
-	addSelector(c,8,"esp_enemy",{"Auto","Team","All"},{"Auto","Team","All"},1,function(v)
+	addSelector(c,8,"esp_style",ESP_STYLES,ESP_STYLES,1,function(v) CB.espStyle=v end)
+	addSelector(c,9,"esp_enemy",{"Auto","Team","All"},{"Auto","Team","All"},1,function(v)
 		CB.enemy=(v=="Auto") and "Auto" or (v=="Team" and "Team" or "All")
 	end)
 
@@ -1748,10 +1776,11 @@ refreshLang()
 if getgenv then
 	getgenv().FinisHub={Combat=CB,GUI=G,Main=MENU,
 		OpenMenu=openMenu,CloseMenu=closeMenu,
-		SetLang=function(l) Lang=l refreshLang() end}
+		SetLang=function(l) Lang=l refreshLang() end,
+		TestSound=function() pcall(function() local s=gunSoundTemplate:Clone() s.Parent=SS s:Play() Debris:AddItem(s,3) end) end}
 	getgenv().FinisToggleMenu=function()
 		if menuOpen then closeMenu() else openMenu() end
 	end
 end
 
-print("[Finis] READY — RSHIFT=menu, F=fly")
+print("[Finis] v6.1 READY — RSHIFT=menu, F=fly")
