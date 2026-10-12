@@ -1,5 +1,5 @@
 -- Подпишитесь на канал Tg: @Finis_Paralich4
-print("[Finis] load v4")
+print("[Finis] load v5")
 
 local P=game:GetService("Players")
 local U=game:GetService("UserInputService")
@@ -8,18 +8,23 @@ local R=game:GetService("RunService")
 local W=game:GetService("Workspace")
 local SG=game:GetService("StarterGui")
 local CP=game:GetService("ContentProvider")
+local SS=game:GetService("SoundService")
 local LP=P.LocalPlayer
+
+local GUN_SOUND_ID="rbxassetid://134013251757271"
 
 -- =========================================================
 -- STATE
 -- =========================================================
 local CB={
 	esp=false, espWall=true, espText=true, espCol="Pink", espStyle="Chams",
-	enemy="Auto",           -- Auto / Team / All
+	espHP=true,
+	enemy="Auto",
 	arrows=true,
 	tb=false, tbFov=140, tbDel=0.35, tbAim=false,
 	tracer=false,
-	killMsg=true, dmgMsg=true, victimMsg=true,
+	gunSound=false,
+	killMsg=true, dmgMsg=false,
 	spin=false, spinSpd=180,
 	maxSpd=false, msVal=20,
 	noclip=false, air=false,
@@ -31,14 +36,8 @@ local CB={
 }
 
 -- =========================================================
--- TEAM DETECTION (правильно для Prison Life)
+-- TEAM
 -- =========================================================
-local ENEMY_TEAMS = {
-	-- если я в одной из этих — враги все остальные
-	guards={"inmate","criminal","prisoner","convict","prisoner"},
-	inmates={"guard","police","cop","swat","officer","police"},
-}
-
 local function getTeamClass(plr)
 	if not plr.Team then return "none" end
 	local n=string.lower(plr.Team.Name)
@@ -54,18 +53,13 @@ end
 local function isEnemy(p)
 	if p==LP then return false end
 	if CB.enemy=="All" then return true end
-	local myCls=getTeamClass(LP)
-	local theirCls=getTeamClass(p)
-	-- если у обоих известные классы — сравнить
-	if myCls~="none" and theirCls~="none" then
-		return myCls~=theirCls
-	end
-	-- если у меня класс есть, у них нет — считать врагом только если у них другая команда (не наша)
-	if myCls~="none" and theirCls=="none" then
+	local mc=getTeamClass(LP)
+	local tc=getTeamClass(p)
+	if mc~="none" and tc~="none" then return mc~=tc end
+	if mc~="none" and tc=="none" then
 		if p.Team and LP.Team and p.Team==LP.Team then return false end
 		return true
 	end
-	-- fallback — по team object
 	if p.Team and LP.Team then return p.Team~=LP.Team end
 	return true
 end
@@ -84,10 +78,7 @@ local function sk(o,c,t,tr) return mk("UIStroke",{Color=c or Color3.fromRGB(60,6
 local function tw(o,tm,p) if not o or not o.Parent then return end if type(tm)=="number" then tm=TweenInfo.new(tm) end local ok,tt=pcall(T.Create,T,o,tm,p) if ok and tt then pcall(function() tt:Play() end) end end
 local function cam() return W.CurrentCamera end
 
--- preload лого ДО интро
-task.spawn(function()
-	pcall(function() CP:PreloadAsync({DECAL_ID,TEXTURE_ID}) end)
-end)
+task.spawn(function() pcall(function() CP:PreloadAsync({DECAL_ID,TEXTURE_ID,GUN_SOUND_ID}) end) end)
 
 task.spawn(function()
 	task.wait(0.8)
@@ -97,8 +88,8 @@ task.spawn(function()
 	while os.clock()-t0<4 do if d.IsLoaded or tx.IsLoaded then break end task.wait(0.1) end
 	local useTx=false
 	if d.IsLoaded then print("[Finis] decal OK")
-	elseif tx.IsLoaded then useTx=true LOGO_ID=TEXTURE_ID print("[Finis] texture")
-	else useTx=true LOGO_ID=TEXTURE_ID print("[Finis] none") end
+	elseif tx.IsLoaded then useTx=true LOGO_ID=TEXTURE_ID
+	else useTx=true LOGO_ID=TEXTURE_ID end
 	d:Destroy() tx:Destroy()
 	if useTx then
 		for _,o in ipairs(PG:GetDescendants()) do
@@ -111,6 +102,22 @@ task.spawn(function()
 	end
 end)
 
+-- =========================================================
+-- GUN SOUND
+-- =========================================================
+local gunSound=Instance.new("Sound")
+gunSound.Name="FinisGunSound"
+gunSound.SoundId=GUN_SOUND_ID
+gunSound.Volume=0.8
+gunSound.Parent=SS
+local lastSoundPlay=0
+local function playGunSound()
+	if not CB.gunSound then return end
+	if os.clock()-lastSoundPlay<0.05 then return end
+	lastSoundPlay=os.clock()
+	gunSound:Play()
+end
+
 -- палитра
 local BG=Color3.fromRGB(10,10,13) local CD=Color3.fromRGB(21,21,25)
 local BD=Color3.fromRGB(34,34,40) local TX=Color3.fromRGB(232,232,238)
@@ -120,22 +127,23 @@ local TO=Color3.fromRGB(0,180,220) local TF=Color3.fromRGB(55,55,65)
 local TK=Color3.fromRGB(42,42,50) local WT=Color3.fromRGB(255,255,255)
 local PL=Color3.fromRGB(15,15,20) local IBT=Color3.fromRGB(4,4,6)
 local OL=Color3.fromRGB(240,250,255)
-local RED=Color3.fromRGB(255,80,80) local GRN=Color3.fromRGB(90,220,130)
+local RED=Color3.fromRGB(255,90,90) local GRN=Color3.fromRGB(90,220,130)
 local ORG=Color3.fromRGB(255,180,80)
 
 -- LANG
 local Lang="en"
 local LS={
 	en={sub="INTERNAL",tab_aim="AimBot",tab_vis="Visuals",tab_bl="Blatant",tab_gn="Guns",tab_ms="Misc",
-		sec_trigger="Triggerbot",sec_spin="Spin",sec_esp="Player ESP",sec_tracer="Tracer",sec_kill="Notifications",
+		sec_trigger="Triggerbot",sec_spin="Spin",sec_esp="Player ESP",sec_tracer="Tracer",sec_kill="Notifications",sec_sound="Sound",
 		sec_char="Character",sec_flight="Flight",sec_vehicle="Vehicle",sec_ammo="Ammo",sec_fswitch="Fast Switch",
 		sec_ui="Interface",sec_lang="Language",t_on="Enabled",
-		tg_en="Auto-shoot",tg_fov="FOV",tg_delay="Delay",tg_aim="Also lock camera",
+		tg_en="Auto-shoot",tg_fov="FOV",tg_delay="Delay",tg_aim="Lock camera",
 		sp_en="Spin",sp_speed="Speed",
 		esp_en="Enable ESP",esp_wall="Wallhack",esp_txt="Distance text",esp_col="Color",
-		esp_style="Style",esp_enemy="Target mode",esp_arrows="Off-screen arrows",
-		tr_en="On shot",
-		kf_kill="Kill messages",kf_dmg="Damage messages",kf_vic="Victim messages",
+		esp_style="Style",esp_enemy="Target mode",esp_arrows="Arrows",esp_hp="HP bar",
+		tr_en="Tracer",
+		kf_kill="Kill messages",kf_dmg="Damage messages",
+		snd_en="Custom shot sound",
 		ms_en="Speed hack",ms_val="Value",nc_en="Noclip",aj_en="Air jump",
 		fl_en="Fly",fl_spd="Speed",fl_mode="Mode",
 		ch_en="Car hack",ch_spd="Max speed",
@@ -143,15 +151,16 @@ local LS={
 		ui_scale="Menu scale",fov_circle="FOV circle",
 		lang_choose="Language"},
 	ru={sub="ИНТЕРНАЛ",tab_aim="Аим",tab_vis="Визуалы",tab_bl="Блат",tab_gn="Оружие",tab_ms="Разное",
-		sec_trigger="Триггербот",sec_spin="Спин",sec_esp="ESP Игроков",sec_tracer="Трассер",sec_kill="Уведомления",
+		sec_trigger="Триггербот",sec_spin="Спин",sec_esp="ESP Игроков",sec_tracer="Трассер",sec_kill="Уведомления",sec_sound="Звук",
 		sec_char="Персонаж",sec_flight="Полёт",sec_vehicle="Машина",sec_ammo="Патроны",sec_fswitch="Автосмена",
 		sec_ui="Интерфейс",sec_lang="Язык",t_on="Включено",
 		tg_en="Авто-выстрел",tg_fov="FOV",tg_delay="Задержка",tg_aim="Крутить камеру",
 		sp_en="Спин",sp_speed="Скорость",
 		esp_en="Включить ESP",esp_wall="Сквозь стены",esp_txt="Дистанция",esp_col="Цвет",
-		esp_style="Стиль",esp_enemy="Режим",esp_arrows="Стрелки по краям",
-		tr_en="При выстреле",
-		kf_kill="Убийства",kf_dmg="Урон",kf_vic="Жертвы",
+		esp_style="Стиль",esp_enemy="Режим",esp_arrows="Стрелки",esp_hp="HP полоска",
+		tr_en="Трассер",
+		kf_kill="Убийства",kf_dmg="Урон",
+		snd_en="Свой звук выстрела",
 		ms_en="Скорость",ms_val="Значение",nc_en="Сквозь стены",aj_en="Прыжок",
 		fl_en="Полёт",fl_spd="Скорость",fl_mode="Режим",
 		ch_en="Ускорение",ch_spd="Скорость машины",
@@ -167,7 +176,7 @@ local G=mk("ScreenGui",{Name="FinisHub",ResetOnSpawn=false,IgnoreGuiInset=true,
 	DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},PG)
 
 -- =========================================================
--- INTRO (плавнее)
+-- INTRO (палочки меньше + свечение)
 -- =========================================================
 local introDone=false
 local function endIntro()
@@ -198,8 +207,11 @@ pcall(function()
 		Image=LOGO_ID,ImageColor3=WT,ImageTransparency=0,ScaleType=Enum.ScaleType.Fit,ZIndex=5010},CX)
 	local IntroLogoScale=mk("UIScale",{Scale=0.3},IntroLogo)
 
-	local HB=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.38,0),Size=UDim2.fromOffset(240,60),BackgroundTransparency=1,ZIndex=5006},CX)
-	local PTS={{10,30},{75,30},{88,42},{102,6},{118,30},{230,30}}
+	-- палочки МЕНЬШЕ и ТОНЬШЕ + свечение
+	local HB=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.4,0),
+		Size=UDim2.fromOffset(170,45),BackgroundTransparency=1,ZIndex=5006},CX)
+	-- новая форма палочек — компактнее (x сжат с 240 до 170)
+	local PTS={{8,22},{54,22},{64,31},{74,5},{86,22},{162,22}}
 	local hbSegs={}
 	for i=1,#PTS-1 do
 		local p1,p2=PTS[i],PTS[i+1]
@@ -208,13 +220,27 @@ pcall(function()
 		local ang=math.deg(math.atan2(dy,dx))
 		local cx=(p1[1]+p2[1])*0.5
 		local cy=(p1[2]+p2[2])*0.5
-		local s=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromOffset(cx,cy),Size=UDim2.fromOffset(0,2),
-			BackgroundColor3=WT,BackgroundTransparency=1,BorderSizePixel=0,Rotation=ang,ZIndex=5007},HB)
+		local s=mk("Frame",{
+			AnchorPoint=Vector2.new(0.5,0.5),
+			Position=UDim2.fromOffset(cx,cy),
+			Size=UDim2.fromOffset(0,1.5),
+			BackgroundColor3=WT,
+			BackgroundTransparency=1,
+			BorderSizePixel=0,
+			Rotation=ang,
+			ZIndex=5007,
+		},HB)
 		uc(s,1)
-		table.insert(hbSegs,{f=s,len=len})
+		-- МЯГКОЕ СВЕЧЕНИЕ
+		local glow=mk("UIStroke",{
+			Color=ACH,
+			Thickness=3,
+			Transparency=1,
+		},s)
+		table.insert(hbSegs,{f=s,len=len,glow=glow})
 	end
 
-	local lblTitle=mk("TextLabel",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.62,0),Size=UDim2.fromOffset(300,34),
+	local lblTitle=mk("TextLabel",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.63,0),Size=UDim2.fromOffset(300,34),
 		BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text="Finis Hub",TextColor3=WT,TextSize=22,
 		TextTransparency=1,ZIndex=5008},CX)
 	local lblTitleScale=mk("UIScale",{Scale=1},lblTitle)
@@ -230,7 +256,7 @@ pcall(function()
 	local FL=mk("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,28,1,-28),Size=UDim2.fromOffset(400,140),BackgroundTransparency=1,ZIndex=5006},OV)
 	local fn={"init renderer.dll","injecting payload.sys","loading config.finis","init memory.engine",
 		"setup modules.lua","esp.chams","esp.arrows","esp.smooth","killfeed.module","notif.engine",
-		"triggerbot.auto","noclip.bypass","fly.engine","carhack.turbo","fastswitch.auto","ready."}
+		"gun.sound.pack","triggerbot.auto","noclip.bypass","fly.engine","carhack.turbo","ready."}
 	local fL={}
 	for i=1,8 do
 		local l=mk("TextLabel",{Size=UDim2.new(1,0,0,14),Position=UDim2.fromOffset(0,(i-1)*16),
@@ -264,7 +290,8 @@ pcall(function()
 			for i,seg in ipairs(hbSegs) do
 				if introDone then return end
 				tw(seg.f,TweenInfo.new(0.6,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),
-					{Size=UDim2.fromOffset(seg.len,2),BackgroundTransparency=0})
+					{Size=UDim2.fromOffset(seg.len,1.5),BackgroundTransparency=0})
+				tw(seg.glow,0.9,{Transparency=0.65})
 				task.wait(0.13)
 			end
 
@@ -302,7 +329,11 @@ pcall(function()
 					fi=ti
 					for _,seg in ipairs(hbSegs) do
 						tw(seg.f,0.2,{BackgroundColor3=ACH})
-						task.delay(0.2,function() tw(seg.f,0.4,{BackgroundColor3=WT}) end)
+						tw(seg.glow,0.3,{Transparency=0.4,Color=ACH,Thickness=3.5})
+						task.delay(0.25,function()
+							tw(seg.f,0.5,{BackgroundColor3=WT})
+							tw(seg.glow,0.5,{Transparency=0.75,Color=AC,Thickness=2.5})
+						end)
 					end
 				end
 				Status.Text=string.format("loading  %d/%d  [%d%%]",ti,#fn,math.floor(pct*100))
@@ -314,21 +345,31 @@ pcall(function()
 			PFill.Size=UDim2.new(1,0,1,0)
 			tw(PFill,0.5,{BackgroundColor3=ACH})
 			task.wait(0.6) if introDone then return end
-			for _,seg in ipairs(hbSegs) do tw(seg.f,0.4,{BackgroundColor3=ACH}) end
+			for _,seg in ipairs(hbSegs) do
+				tw(seg.f,0.4,{BackgroundColor3=ACH})
+				tw(seg.glow,0.5,{Transparency=0.3,Color=ACH,Thickness=4})
+			end
 			task.wait(0.5) if introDone then return end
-			for _,seg in ipairs(hbSegs) do tw(seg.f,0.45,{BackgroundColor3=WT}) end
-			task.wait(0.7) if introDone then return end
+			for _,seg in ipairs(hbSegs) do
+				tw(seg.f,0.5,{BackgroundColor3=WT})
+				tw(seg.glow,0.6,{Transparency=0.7,Color=AC,Thickness=2.5})
+			end
+			task.wait(0.8) if introDone then return end
 
-			tw(CX,TweenInfo.new(1.1,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Position=UDim2.new(0.5,0,0.35,0)})
-			tw(IntroLogo,TweenInfo.new(0.85,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{ImageTransparency=1})
-			tw(IntroLogoScale,TweenInfo.new(0.85,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=1.25})
-			tw(lblTitle,0.8,{TextTransparency=1})
-			tw(lblTitleScale,TweenInfo.new(0.8,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=1.15})
-			tw(Status,0.8,{TextTransparency=1})
-			tw(PBar,0.8,{BackgroundTransparency=1})
-			tw(FL,TweenInfo.new(0.8,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Position=UDim2.new(0,28,1,-10)})
-			for _,l in ipairs(fL) do tw(l,0.8,{TextTransparency=1}) end
-			task.wait(1.1) if introDone then return end
+			tw(CX,TweenInfo.new(1.2,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Position=UDim2.new(0.5,0,0.35,0)})
+			tw(IntroLogo,TweenInfo.new(0.9,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{ImageTransparency=1})
+			tw(IntroLogoScale,TweenInfo.new(0.9,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=1.25})
+			tw(lblTitle,0.85,{TextTransparency=1})
+			tw(lblTitleScale,TweenInfo.new(0.85,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=1.15})
+			tw(Status,0.85,{TextTransparency=1})
+			tw(PBar,0.85,{BackgroundTransparency=1})
+			tw(FL,TweenInfo.new(0.85,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Position=UDim2.new(0,28,1,-10)})
+			for _,seg in ipairs(hbSegs) do
+				tw(seg.f,0.9,{BackgroundTransparency=1})
+				tw(seg.glow,0.9,{Transparency=1})
+			end
+			for _,l in ipairs(fL) do tw(l,0.85,{TextTransparency=1}) end
+			task.wait(1.2) if introDone then return end
 			endIntro()
 		end)
 		if not ok then warn("[Finis] intro err:",err) endIntro() end
@@ -349,11 +390,11 @@ local AccLine=mk("Frame",{Size=UDim2.new(0,0,0,2),Position=UDim2.new(0.5,0,0,0),
 uc(AccLine,1)
 task.spawn(function()
 	while G and G.Parent and AccLine and AccLine.Parent do
-		tw(AccLine,TweenInfo.new(2.2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Size=UDim2.new(0.75,0,0,2),BackgroundTransparency=0.55})
-		task.wait(2.2)
+		tw(AccLine,TweenInfo.new(2.5,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Size=UDim2.new(0.75,0,0,2),BackgroundTransparency=0.55})
+		task.wait(2.5)
 		if not (G and G.Parent and AccLine and AccLine.Parent) then break end
-		tw(AccLine,TweenInfo.new(2.2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Size=UDim2.new(0.42,0,0,2),BackgroundTransparency=0.2})
-		task.wait(2.2)
+		tw(AccLine,TweenInfo.new(2.5,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Size=UDim2.new(0.42,0,0,2),BackgroundTransparency=0.2})
+		task.wait(2.5)
 	end
 end)
 
@@ -368,8 +409,8 @@ regText(lblInt,"sub")
 local CLB=mk("TextButton",{Size=UDim2.fromOffset(36,36),Position=UDim2.new(1,-44,0,7),BackgroundTransparency=1,
 	Font=Enum.Font.GothamBold,Text="x",TextColor3=TD,TextSize=18,AutoButtonColor=false,ZIndex=905},TOP)
 local CLS=mk("UIScale",{Scale=1},CLB)
-CLB.MouseEnter:Connect(function() tw(CLS,0.25,{Scale=1.2}) tw(CLB,0.25,{TextColor3=TX,Rotation=90}) end)
-CLB.MouseLeave:Connect(function() tw(CLS,0.25,{Scale=1}) tw(CLB,0.25,{TextColor3=TD,Rotation=0}) end)
+CLB.MouseEnter:Connect(function() tw(CLS,0.3,{Scale=1.2}) tw(CLB,0.3,{TextColor3=TX,Rotation=90}) end)
+CLB.MouseLeave:Connect(function() tw(CLS,0.3,{Scale=1}) tw(CLB,0.3,{TextColor3=TD,Rotation=0}) end)
 
 local CON=mk("Frame",{Size=UDim2.new(1,0,1,-108),Position=UDim2.fromOffset(0,50),BackgroundTransparency=1,ClipsDescendants=true,ZIndex=901},MENU)
 mk("UIPadding",{PaddingLeft=UDim.new(0,14),PaddingRight=UDim.new(0,14)},CON)
@@ -404,10 +445,10 @@ for i,n in ipairs(NAV) do
 	uc(un,2)
 	NB[n]={btn=wr,scale=wrS,lbl=tl,ul=un}
 	wr.MouseEnter:Connect(function()
-		if n~=SEL then tw(tl,0.25,{TextColor3=TX}) tw(wrS,TweenInfo.new(0.35,Enum.EasingStyle.Back),{Scale=1.05}) end
+		if n~=SEL then tw(tl,0.3,{TextColor3=TX}) tw(wrS,TweenInfo.new(0.4,Enum.EasingStyle.Back),{Scale=1.05}) end
 	end)
 	wr.MouseLeave:Connect(function()
-		if n~=SEL then tw(tl,0.25,{TextColor3=TD}) tw(wrS,0.3,{Scale=1}) end
+		if n~=SEL then tw(tl,0.3,{TextColor3=TD}) tw(wrS,0.35,{Scale=1}) end
 	end)
 end
 
@@ -421,11 +462,11 @@ local function addSec(p,o,key)
 	regText(lbl,key)
 	task.spawn(function()
 		while G and G.Parent and dot and dot.Parent do
-			tw(dot,TweenInfo.new(2.4,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{BackgroundColor3=ACH,Rotation=dot.Rotation+180})
-			task.wait(2.4)
+			tw(dot,TweenInfo.new(2.8,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{BackgroundColor3=ACH,Rotation=dot.Rotation+180})
+			task.wait(2.8)
 			if not (G and G.Parent and dot and dot.Parent) then break end
-			tw(dot,TweenInfo.new(2.4,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{BackgroundColor3=AC,Rotation=dot.Rotation+180})
-			task.wait(2.4)
+			tw(dot,TweenInfo.new(2.8,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{BackgroundColor3=AC,Rotation=dot.Rotation+180})
+			task.wait(2.8)
 		end
 	end)
 end
@@ -440,14 +481,14 @@ local function addCard(p,o)
 	mk("UIListLayout",{Padding=UDim.new(0,0),SortOrder=Enum.SortOrder.LayoutOrder},cd)
 	mk("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4)},cd)
 	cd.MouseEnter:Connect(function()
-		tw(cd,0.3,{BackgroundColor3=Color3.fromRGB(27,27,33)})
-		tw(cs,0.3,{Color=AC,Transparency=0.55})
-		tw(cdS,TweenInfo.new(0.4,Enum.EasingStyle.Back),{Scale=1.008})
+		tw(cd,0.35,{BackgroundColor3=Color3.fromRGB(27,27,33)})
+		tw(cs,0.35,{Color=AC,Transparency=0.55})
+		tw(cdS,TweenInfo.new(0.45,Enum.EasingStyle.Back),{Scale=1.008})
 	end)
 	cd.MouseLeave:Connect(function()
-		tw(cd,0.3,{BackgroundColor3=CD})
-		tw(cs,0.3,{Color=BD,Transparency=0.2})
-		tw(cdS,0.35,{Scale=1})
+		tw(cd,0.35,{BackgroundColor3=CD})
+		tw(cs,0.35,{Color=BD,Transparency=0.2})
+		tw(cdS,0.4,{Scale=1})
 	end)
 	table.insert(allCards,cd)
 	return cd
@@ -475,17 +516,17 @@ local function addToggle(p,o,tkey,subkey,def,cb)
 	uc(kn,100)
 	local st={en=def or false}
 	local function ap(e,sil)
-		tw(trk,0.35,{BackgroundColor3=e and TO or TF})
-		tw(ts,0.35,{Transparency=e and 0.2 or 0.5})
-		tw(kn,TweenInfo.new(0.45,Enum.EasingStyle.Back),{Position=e and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)})
+		tw(trk,0.4,{BackgroundColor3=e and TO or TF})
+		tw(ts,0.4,{Transparency=e and 0.2 or 0.5})
+		tw(kn,TweenInfo.new(0.5,Enum.EasingStyle.Back),{Position=e and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)})
 		if not sil and cb then cb(e) end
 	end
-	r.MouseEnter:Connect(function() if not st.en then tw(trk,0.3,{BackgroundColor3=Color3.fromRGB(65,65,75)}) end end)
-	r.MouseLeave:Connect(function() if not st.en then tw(trk,0.3,{BackgroundColor3=TF}) end end)
+	r.MouseEnter:Connect(function() if not st.en then tw(trk,0.35,{BackgroundColor3=Color3.fromRGB(65,65,75)}) end end)
+	r.MouseLeave:Connect(function() if not st.en then tw(trk,0.35,{BackgroundColor3=TF}) end end)
 	r.MouseButton1Click:Connect(function()
 		st.en=not st.en ap(st.en)
-		tw(trkS,TweenInfo.new(0.25,Enum.EasingStyle.Back),{Scale=1.15})
-		task.delay(0.25,function() tw(trkS,0.35,{Scale=1}) end)
+		tw(trkS,TweenInfo.new(0.3,Enum.EasingStyle.Back),{Scale=1.15})
+		task.delay(0.3,function() tw(trkS,0.4,{Scale=1}) end)
 	end)
 	if def and cb then cb(true) end
 	return st
@@ -513,8 +554,8 @@ local function addSlider(p,o,tkey,mn,mx,df,sfx,cb,isFloat)
 	local function sv(v,sil)
 		val=math.clamp(v,mn,mx)
 		local a=(val-mn)/(mx-mn)
-		tw(fl,0.15,{Size=UDim2.new(a,0,1,0)})
-		tw(kb,0.2,{Position=UDim2.new(a,0,0.5,0)})
+		tw(fl,0.2,{Size=UDim2.new(a,0,1,0)})
+		tw(kb,0.25,{Position=UDim2.new(a,0,0.5,0)})
 		if isFloat then vL.Text=string.format("%.2f",val)..(sfx or "") else vL.Text=tostring(math.floor(val+.5))..(sfx or "") end
 		if not sil and cb then cb(val) end
 	end
@@ -524,7 +565,7 @@ local function addSlider(p,o,tkey,mn,mx,df,sfx,cb,isFloat)
 	hit.InputBegan:Connect(function(x)
 		if x.UserInputType==Enum.UserInputType.MouseButton1 or x.UserInputType==Enum.UserInputType.Touch then
 			drg=true fa(x.Position.X)
-			tw(kb,0.25,{Size=UDim2.fromOffset(18,18)}) tw(fl,0.25,{BackgroundColor3=ACH})
+			tw(kb,0.3,{Size=UDim2.fromOffset(18,18)}) tw(fl,0.3,{BackgroundColor3=ACH})
 		end
 	end)
 	U.InputChanged:Connect(function(x)
@@ -532,7 +573,7 @@ local function addSlider(p,o,tkey,mn,mx,df,sfx,cb,isFloat)
 	end)
 	U.InputEnded:Connect(function(x)
 		if x.UserInputType==Enum.UserInputType.MouseButton1 or x.UserInputType==Enum.UserInputType.Touch then
-			if drg then drg=false tw(kb,0.3,{Size=UDim2.fromOffset(14,14)}) tw(fl,0.35,{BackgroundColor3=AC}) end
+			if drg then drg=false tw(kb,0.35,{Size=UDim2.fromOffset(14,14)}) tw(fl,0.4,{BackgroundColor3=AC}) end
 		end
 	end)
 	sv(df,true) if cb then cb(df) end
@@ -559,14 +600,14 @@ local function addSelector(p,o,tkey,opts,disp,di,cb)
 		if not sil and cb then cb(opts[i],i) end
 	end
 	ap(i,true)
-	r.MouseEnter:Connect(function() tw(bx,0.3,{BackgroundColor3=Color3.fromRGB(38,38,45)}) tw(ar,0.3,{TextColor3=AC}) end)
-	r.MouseLeave:Connect(function() tw(bx,0.3,{BackgroundColor3=Color3.fromRGB(30,30,36)}) tw(ar,0.3,{TextColor3=TD}) end)
+	r.MouseEnter:Connect(function() tw(bx,0.35,{BackgroundColor3=Color3.fromRGB(38,38,45)}) tw(ar,0.35,{TextColor3=AC}) end)
+	r.MouseLeave:Connect(function() tw(bx,0.35,{BackgroundColor3=Color3.fromRGB(30,30,36)}) tw(ar,0.35,{TextColor3=TD}) end)
 	r.MouseButton1Click:Connect(function()
 		ap(i+1)
-		tw(bx,0.15,{BackgroundColor3=Color3.fromRGB(0,130,165)})
-		task.delay(0.15,function() tw(bx,0.4,{BackgroundColor3=Color3.fromRGB(30,30,36)}) end)
-		tw(ar,TweenInfo.new(0.4,Enum.EasingStyle.Back),{Rotation=180})
-		task.delay(0.4,function() if ar.Parent then ar.Rotation=0 end end)
+		tw(bx,0.18,{BackgroundColor3=Color3.fromRGB(0,130,165)})
+		task.delay(0.18,function() tw(bx,0.45,{BackgroundColor3=Color3.fromRGB(30,30,36)}) end)
+		tw(ar,TweenInfo.new(0.45,Enum.EasingStyle.Back),{Rotation=180})
+		task.delay(0.45,function() if ar.Parent then ar.Rotation=0 end end)
 	end)
 	return{get=function() return opts[i] end,set=function(n) ap(n) end}
 end
@@ -576,15 +617,15 @@ local function openMenu()
 	if menuOpen then return end
 	menuOpen=true
 	MENU.Visible=true MENU.BackgroundTransparency=1 MSC.Scale=0.85
-	tw(MENU,0.45,{BackgroundTransparency=0})
-	tw(MSC,TweenInfo.new(0.7,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale=1})
+	tw(MENU,0.5,{BackgroundTransparency=0})
+	tw(MSC,TweenInfo.new(0.8,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale=1})
 	for i,cd in ipairs(allCards) do
 		local s=cd:FindFirstChildOfClass("UIScale")
 		cd.BackgroundTransparency=1 if s then s.Scale=0.94 end
 		task.delay((i-1)*0.06,function()
 			if cd and cd.Parent then
-				tw(cd,0.6,{BackgroundTransparency=0})
-				if s then tw(s,TweenInfo.new(0.65,Enum.EasingStyle.Back),{Scale=1}) end
+				tw(cd,0.65,{BackgroundTransparency=0})
+				if s then tw(s,TweenInfo.new(0.7,Enum.EasingStyle.Back),{Scale=1}) end
 			end
 		end)
 	end
@@ -592,9 +633,9 @@ end
 local function closeMenu()
 	if not menuOpen then return end
 	menuOpen=false
-	tw(MENU,0.4,{BackgroundTransparency=1})
-	tw(MSC,TweenInfo.new(0.45,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=0.9})
-	task.delay(0.45,function() if not menuOpen then MENU.Visible=false end end)
+	tw(MENU,0.45,{BackgroundTransparency=1})
+	tw(MSC,TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{Scale=0.9})
+	task.delay(0.5,function() if not menuOpen then MENU.Visible=false end end)
 end
 CLB.MouseButton1Click:Connect(closeMenu)
 
@@ -615,20 +656,20 @@ local PILogo=mk("ImageLabel",{Name="PILogo",Size=UDim2.fromOffset(28,28),Positio
 local PILogoScale=mk("UIScale",{Scale=1},PILogo)
 task.spawn(function()
 	while G and G.Parent and PILogo and PILogo.Parent do
-		tw(PILogo,2.4,{ImageColor3=Color3.fromRGB(210,250,255)})
-		task.wait(2.4)
+		tw(PILogo,2.8,{ImageColor3=Color3.fromRGB(210,250,255)})
+		task.wait(2.8)
 		if not (G and G.Parent and PILogo and PILogo.Parent) then break end
-		tw(PILogo,2.4,{ImageColor3=WT})
-		task.wait(2.4)
+		tw(PILogo,2.8,{ImageColor3=WT})
+		task.wait(2.8)
 	end
 end)
 task.spawn(function()
 	while G and G.Parent and PILogoScale and PILogoScale.Parent do
-		tw(PILogoScale,TweenInfo.new(2.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1.08})
-		task.wait(2.6)
+		tw(PILogoScale,TweenInfo.new(3,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1.06})
+		task.wait(3)
 		if not (G and G.Parent and PILogoScale and PILogoScale.Parent) then break end
-		tw(PILogoScale,TweenInfo.new(2.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1})
-		task.wait(2.6)
+		tw(PILogoScale,TweenInfo.new(3,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1})
+		task.wait(3)
 	end
 end)
 mk("TextLabel",{Size=UDim2.fromOffset(60,20),Position=UDim2.fromOffset(46,10),BackgroundTransparency=1,
@@ -667,75 +708,77 @@ U.InputEnded:Connect(function(x)
 		end
 	end
 end)
-PB.MouseEnter:Connect(function() tw(PB,0.35,{BackgroundColor3=Color3.fromRGB(24,24,30)}) end)
-PB.MouseLeave:Connect(function() tw(PB,0.35,{BackgroundColor3=PL}) end)
+PB.MouseEnter:Connect(function() tw(PB,0.4,{BackgroundColor3=Color3.fromRGB(24,24,30)}) end)
+PB.MouseLeave:Connect(function() tw(PB,0.4,{BackgroundColor3=PL}) end)
 task.spawn(function()
 	while not introDone do task.wait(0.2) end
 	PH.Position=UDim2.new(0,-260,0,12) PB.BackgroundTransparency=1
-	tw(PH,TweenInfo.new(1.0,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Position=UDim2.new(0,12,0,12)})
-	tw(PB,0.7,{BackgroundTransparency=0})
-	task.wait(1.0)
+	tw(PH,TweenInfo.new(1.2,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Position=UDim2.new(0,12,0,12)})
+	tw(PB,0.9,{BackgroundTransparency=0})
+	task.wait(1.2)
 	openMenu()
 end)
 
 -- =========================================================
--- KILL FEED (уведомления)
+-- KILL FEED (только мои действия, без спама)
 -- =========================================================
 local KF=mk("Frame",{Name="KillFeed",AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-14,0,140),
-	Size=UDim2.fromOffset(320,300),BackgroundTransparency=1,ZIndex=1050},G)
-mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,
+	Size=UDim2.fromOffset(340,340),BackgroundTransparency=1,ZIndex=1050},G)
+mk("UIListLayout",{Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder,
 	HorizontalAlignment=Enum.HorizontalAlignment.Right},KF)
 
 local kfOrder=0
-local function addMsg(texts,col,icon)
-	-- texts = {main, sub}
-	local row=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundColor3=Color3.fromRGB(20,20,26),
+local function addKill(title, sub, col)
+	kfOrder = kfOrder + 1
+	local row=mk("Frame",{Size=UDim2.new(1,0,0,58),BackgroundColor3=Color3.fromRGB(20,20,26),
 		BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=-kfOrder,ZIndex=1051},KF)
-	uc(row,10)
-	local rowS=sk(row,BD,1,0.3)
-	local accent=mk("Frame",{Size=UDim2.fromOffset(3,36),Position=UDim2.fromOffset(8,8),
+	uc(row,12)
+	local rowS=sk(row,col,1,0.4)
+	local accent=mk("Frame",{Size=UDim2.fromOffset(3,40),Position=UDim2.fromOffset(8,9),
 		BackgroundColor3=col,BorderSizePixel=0,ZIndex=1052},row)
 	uc(accent,2)
-	local mainLbl=mk("TextLabel",{Size=UDim2.new(1,-28,0,20),Position=UDim2.fromOffset(18,6),
-		BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text=texts[1] or "",
-		TextColor3=col,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=1052},row)
-	local subLbl=mk("TextLabel",{Size=UDim2.new(1,-28,0,16),Position=UDim2.fromOffset(18,26),
-		BackgroundTransparency=1,Font=Enum.Font.Gotham,Text=texts[2] or "",
+
+	mk("TextLabel",{Size=UDim2.new(1,-30,0,22),Position=UDim2.fromOffset(18,6),
+		BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text=title,
+		TextColor3=col,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=1052},row)
+	mk("TextLabel",{Size=UDim2.new(1,-30,0,18),Position=UDim2.fromOffset(18,30),
+		BackgroundTransparency=1,Font=Enum.Font.Gotham,Text=sub,
 		TextColor3=TD,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=1052},row)
+
 	local sc=mk("UIScale",{Scale=0.6},row)
-	local rowX=mk("Frame",{Size=UDim2.new(1,0,0,0),Position=UDim2.fromOffset(0,0),
-		BackgroundColor3=Color3.fromRGB(20,20,26),BackgroundTransparency=0.1,BorderSizePixel=0,ZIndex=1051},row) -- for collapse anim
-	rowX.Visible=false
 	tw(row,0.5,{BackgroundTransparency=0})
-	tw(sc,TweenInfo.new(0.6,Enum.EasingStyle.Back),{Scale=1})
-	task.delay(4.5,function()
-		tw(row,0.5,{BackgroundTransparency=1})
-		tw(sc,0.5,{Scale=0.6})
-		task.wait(0.6)
+	tw(sc,TweenInfo.new(0.7,Enum.EasingStyle.Back),{Scale=1})
+	task.delay(4,function()
+		tw(row,0.6,{BackgroundTransparency=1})
+		tw(rowS,0.6,{Transparency=1})
+		tw(sc,0.6,{Transparency=0,},nil)
+		tw(sc,0.6,{Scale=0.6})
+		tw(accent,0.6,{BackgroundTransparency=1})
+		task.wait(0.7)
 		if row.Parent then row:Destroy() end
 	end)
-	return row
 end
 
--- Отслеживание урона / убийств / наши выстрелы
-local lastHp={}          -- [plr] = health
-local recentShots={}     -- массив последних наших выстрелов
+-- Отслеживание МОИХ выстрелов
+local recentShots={}   -- наши выстрелы: {t, victim, weapon, damage=0}
 local myKills=0
+local lastHp={}
 
-local function rememberShot(target, weaponName, distance)
+local function rememberShot(victim, weaponName, distance)
 	table.insert(recentShots, 1, {
 		t=os.clock(),
-		target=target,
+		victim=victim,
 		weapon=weaponName,
 		distance=distance,
+		dmg=0,
 	})
-	if #recentShots>6 then table.remove(recentShots) end
+	if #recentShots>8 then table.remove(recentShots) end
 end
 
-local function findRecentShotFor(plr)
+local function findRecentShot(victim)
 	local now=os.clock()
 	for _,s in ipairs(recentShots) do
-		if s.target==plr and now-s.t<1.2 then
+		if s.victim==victim and now-s.t<1.5 then
 			return s
 		end
 	end
@@ -751,45 +794,50 @@ task.spawn(function()
 					local hum=ch:FindFirstChildOfClass("Humanoid")
 					if hum then
 						local prev=lastHp[p]
-						if prev and hum.Health<prev then
-							local dmg=math.floor(prev-hum.Health)
+						local cur=hum.Health
+						if prev and cur<prev then
+							local dmg=math.floor(prev-cur)
 							if dmg>0 then
-								local myShot=findRecentShotFor(p)
-								-- наш урон
-								if myShot and CB.dmgMsg and hum.Health>0 then
-									addMsg({
-										"-"..dmg.."  "..p.Name,
-										myShot.weapon.."  •  "..math.floor(myShot.distance).." studs",
-									}, RED)
+								local shot=findRecentShot(p)
+								if shot then
+									-- это НАШ урон
+									shot.dmg = shot.dmg + dmg
+									-- показываем урон только если включено И урон существенный
+									if CB.dmgMsg and cur>0 and dmg>=5 then
+										addKill(
+											"-"..dmg.."  "..p.Name,
+											shot.weapon.."  •  "..math.floor(shot.distance).." studs",
+										RED)
+									end
+									-- если умер — сообщаем кил
+									if cur<=0 and CB.killMsg then
+										myKills=myKills+1
+										addKill(
+											"KILL  "..p.Name,
+											shot.weapon.."  •  "..math.floor(shot.distance).." studs  •  #"..myKills,
+										GRN)
+										-- очищаем все выстрелы в этого
+										for i=#recentShots,1,-1 do
+											if recentShots[i].victim==p then
+												table.remove(recentShots,i)
+											end
+										end
+									end
 								end
-								-- наш кил
-								if myShot and hum.Health<=0 and CB.killMsg then
-									myKills=myKills+1
-									addMsg({
-										"KILL  "..p.Name,
-										myShot.weapon.."  •  "..math.floor(myShot.distance).." studs  •  #"..myKills,
-									}, GRN)
-								end
-								-- чужой кил
-								if not myShot and hum.Health<=0 and CB.victimMsg then
-									addMsg({
-										"RIP  "..p.Name,
-										"killed  •  "..dmg.." dmg",
-									}, ORG)
-								end
+								-- если не наш — вообще ничего не показываем (согласно запросу)
 							end
 						end
-						lastHp[p]=hum.Health
+						lastHp[p]=cur
 					end
 				end
 			end
 		end
-		task.wait(0.06)
+		task.wait(0.08)
 	end
 end)
 
 -- =========================================================
--- ESP v4
+-- ESP v5 (добавлены HP бары)
 -- =========================================================
 local ESP_STYLES={"Chams","Outline","Both","Skeleton","Corners","Box","All"}
 local ESP_COLORS={
@@ -801,7 +849,7 @@ local function ec() return ESP_COLORS[CB.espCol] or ESP_COLORS.Pink end
 local espCache={}
 local function cleanupE(e)
 	if not e then return end
-	for _,k in ipairs({"hlInner","hlOuter","corners","skeleton","text","box"}) do
+	for _,k in ipairs({"hlInner","hlOuter","corners","skeleton","text","box","hpBar"}) do
 		if e[k] then pcall(function() e[k]:Destroy() end) e[k]=nil end
 	end
 end
@@ -832,14 +880,9 @@ local function ensureCorners(ch)
 	local hrp=ch:FindFirstChild("HumanoidRootPart")
 	if not hrp then return nil end
 	local bg=Instance.new("BillboardGui")
-	bg.Name="FinisCorners"
-	bg.Size=UDim2.new(0,80,0,110)
-	bg.Adornee=hrp
-	bg.AlwaysOnTop=true
-	bg.LightInfluence=0
-	bg.ResetOnSpawn=false
-	bg.SizeOffset=Vector2.new(0,0)
-	bg.Parent=ch
+	bg.Name="FinisCorners" bg.Size=UDim2.new(0,80,0,110) bg.Adornee=hrp
+	bg.AlwaysOnTop=true bg.LightInfluence=0 bg.ResetOnSpawn=false
+	bg.SizeOffset=Vector2.new(0,0) bg.Parent=ch
 	local t=2 local l=12
 	local tlh=makeCorner(bg,"TLh",t,l) tlh.AnchorPoint=Vector2.new(0,0) tlh.Position=UDim2.new(0,0,0,0)
 	local tlv=makeCorner(bg,"TLv",l,t) tlv.AnchorPoint=Vector2.new(0,0) tlv.Position=UDim2.new(0,0,0,0)
@@ -904,6 +947,37 @@ local function ensureBox(ch)
 	e.box=gui e.boxLines={t,b,l,r} return gui
 end
 
+-- HP BAR — рядом с игроком
+local function ensureHP(ch)
+	local e=espCache[ch]
+	if e and e.hpBar and e.hpBar.Parent then return e.hpBar end
+	if e and e.hpBar then pcall(function() e.hpBar:Destroy() end) end
+	local hrp=ch:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+	local bg=Instance.new("BillboardGui")
+	bg.Name="FinisHP" bg.Size=UDim2.new(0,4,0,50)
+	bg.StudsOffsetWorldSpace=Vector3.new(0,0,0)
+	bg.Adornee=hrp
+	bg.AlwaysOnTop=true
+	bg.LightInfluence=0
+	bg.SizeOffset=Vector2.new(0,0)
+	bg.Offset=Vector2.new(-46,0)
+	bg.ResetOnSpawn=false
+	bg.Parent=ch
+	local back=mk("Frame",{Name="Bg",Size=UDim2.new(1,0,1,0),
+		BackgroundColor3=Color3.fromRGB(20,20,22),BackgroundTransparency=0.2,
+		BorderSizePixel=0,Parent=bg})
+	uc(back,2)
+	local fill=mk("Frame",{Name="Fill",Size=UDim2.new(1,0,1,0),
+		Position=UDim2.new(0,0,1,0),AnchorPoint=Vector2.new(0,1),
+		BackgroundColor3=GRN,BorderSizePixel=0,Parent=back})
+	uc(fill,2)
+	local outline=sk(back,Color3.fromRGB(0,0,0),1,0.3)
+	if not e then e={} espCache[ch]=e end
+	e.hpBar=bg e.hpFill=fill
+	return bg
+end
+
 local function ensureText(ch,plr)
 	local e=espCache[ch]
 	local head=ch:FindFirstChild("Head")
@@ -950,30 +1024,25 @@ local function updateTarget(plr,ch)
 	local hum=ch:FindFirstChildOfClass("Humanoid")
 	local vis=CB.esp and hrp and hum and hum.Health>0
 
-	-- Highlight
 	if vis and (style=="Chams" or style=="Outline" or style=="Both" or style=="All") then
 		local en=ensureHL(ch)
-		if en then
-			local inner=en.hlInner
-			local outer=en.hlOuter
-			if inner and outer then
-				inner.Enabled=true inner.Adornee=ch
-				outer.Enabled=true outer.Adornee=ch
-				local depth=CB.espWall and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-				inner.DepthMode=depth outer.DepthMode=depth
-				if style=="Chams" then
-					inner.FillTransparency=0.35 inner.FillColor=col inner.OutlineTransparency=1
-					outer.FillTransparency=1 outer.OutlineTransparency=0.3
-					outer.OutlineColor=col:Lerp(OL,0.6)
-				elseif style=="Outline" then
-					inner.FillTransparency=1 inner.OutlineTransparency=0.1
-					inner.OutlineColor=col:Lerp(OL,0.3)
-					outer.FillTransparency=1 outer.OutlineTransparency=1
-				else
-					inner.FillTransparency=0.5 inner.FillColor=col inner.OutlineTransparency=1
-					outer.FillTransparency=1 outer.OutlineTransparency=0.15
-					outer.OutlineColor=col:Lerp(OL,0.55)
-				end
+		if en and en.hlInner and en.hlOuter then
+			en.hlInner.Enabled=true en.hlInner.Adornee=ch
+			en.hlOuter.Enabled=true en.hlOuter.Adornee=ch
+			local depth=CB.espWall and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+			en.hlInner.DepthMode=depth en.hlOuter.DepthMode=depth
+			if style=="Chams" then
+				en.hlInner.FillTransparency=0.35 en.hlInner.FillColor=col en.hlInner.OutlineTransparency=1
+				en.hlOuter.FillTransparency=1 en.hlOuter.OutlineTransparency=0.3
+				en.hlOuter.OutlineColor=col:Lerp(OL,0.6)
+			elseif style=="Outline" then
+				en.hlInner.FillTransparency=1 en.hlInner.OutlineTransparency=0.1
+				en.hlInner.OutlineColor=col:Lerp(OL,0.3)
+				en.hlOuter.FillTransparency=1 en.hlOuter.OutlineTransparency=1
+			else
+				en.hlInner.FillTransparency=0.5 en.hlInner.FillColor=col en.hlInner.OutlineTransparency=1
+				en.hlOuter.FillTransparency=1 en.hlOuter.OutlineTransparency=0.15
+				en.hlOuter.OutlineColor=col:Lerp(OL,0.55)
 			end
 		end
 	elseif e.hlInner then
@@ -981,7 +1050,6 @@ local function updateTarget(plr,ch)
 		if e.hlOuter then e.hlOuter.Enabled=false end
 	end
 
-	-- Corners
 	if vis and (style=="Corners" or style=="All") then
 		local bg=ensureCorners(ch)
 		if bg then
@@ -992,7 +1060,6 @@ local function updateTarget(plr,ch)
 		end
 	elseif e.corners then e.corners.Enabled=false end
 
-	-- Skeleton
 	if vis and (style=="Skeleton" or style=="All") then
 		local gui=ensureSkel(ch)
 		if gui then
@@ -1012,7 +1079,6 @@ local function updateTarget(plr,ch)
 		end
 	elseif e.skeleton then e.skeleton.Enabled=false end
 
-	-- Box
 	if vis and (style=="Box" or style=="All") then
 		local bg=ensureBox(ch)
 		if bg then
@@ -1023,7 +1089,24 @@ local function updateTarget(plr,ch)
 		end
 	elseif e.box then e.box.Enabled=false end
 
-	-- Text
+	-- HP bar
+	if vis and CB.espHP then
+		local bg=ensureHP(ch)
+		if bg then
+			bg.Enabled=true
+			if e.hpFill and hum then
+				local ratio=math.clamp(hum.Health/math.max(hum.MaxHealth,100),0,1)
+				tw(e.hpFill,0.15,{Size=UDim2.new(1,0,ratio,0)})
+				local hpCol=GRN
+				if ratio<0.3 then hpCol=RED
+				elseif ratio<0.6 then hpCol=ORG
+				elseif ratio<0.85 then hpCol=Color3.fromRGB(255,220,90)
+				end
+				e.hpFill.BackgroundColor3=hpCol
+			end
+		end
+	elseif e.hpBar then e.hpBar.Enabled=false end
+
 	if CB.espText and vis then
 		local bg=ensureText(ch,plr)
 		if bg then
@@ -1055,89 +1138,54 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- TRIANGLE ARROWS — правильно вокруг FOV
+-- TRIANGLE ARROWS
 -- =========================================================
 local arrHolder=nil
 local arrows={}
-
 local function ensureArrHolder()
 	if arrHolder and arrHolder.Parent then return arrHolder end
 	arrHolder=mk("Frame",{Name="FinisArrows",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
 		BorderSizePixel=0,ZIndex=3},G)
 	return arrHolder
 end
-
--- треугольник через 2 линии: вершина справа, основание слева (форма ">")
-local function drawChevron(container, size, col)
-	-- очистить
+local function drawChevron(container,size,col)
 	for _,c in ipairs(container:GetChildren()) do c:Destroy() end
-	-- вершина справа: (size, size/2)
-	-- верхний левый угол: (0, 0)
-	-- нижний левый угол: (0, size)
 	local function line(x1,y1,x2,y2)
 		local dx,dy=x2-x1,y2-y1
 		local len=math.sqrt(dx*dx+dy*dy)
 		local ang=math.deg(math.atan2(dy,dx))
 		local cx,cy=(x1+x2)*0.5,(y1+y2)*0.5
-		local f=mk("Frame",{
-			AnchorPoint=Vector2.new(0.5,0.5),
-			Position=UDim2.fromOffset(cx,cy),
-			Size=UDim2.fromOffset(len,2.5),
-			BackgroundColor3=col,
-			BorderSizePixel=0,
-			Rotation=ang,
-			Parent=container,
-		})
+		local f=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),
+			Position=UDim2.fromOffset(cx,cy),Size=UDim2.fromOffset(len,2.5),
+			BackgroundColor3=col,BorderSizePixel=0,Rotation=ang,Parent=container})
 		uc(f,1)
 		return f
 	end
-	return {
-		line(0,0, size, size*0.5),      -- верхнее ребро
-		line(0,size, size, size*0.5),   -- нижнее ребро
-	}
+	return {line(0,0,size,size*0.5),line(0,size,size,size*0.5)}
 end
-
 local function getArrow(i)
 	if arrows[i] and arrows[i].bg and arrows[i].bg.Parent then return arrows[i] end
-	local bg=mk("Frame",{
-		Name="Arrow"..i,
-		AnchorPoint=Vector2.new(0.5,0.5),
-		Size=UDim2.fromOffset(0,0),
-		BackgroundTransparency=1,
-		BorderSizePixel=0,
-		ZIndex=4,
-	},ensureArrHolder())
-	local holder=mk("Frame",{
-		Name="Holder",
-		Size=UDim2.fromOffset(18,18),
-		BackgroundTransparency=1,
-		BorderSizePixel=0,
-		Parent=bg,
-	})
+	local bg=mk("Frame",{Name="Arrow"..i,AnchorPoint=Vector2.new(0.5,0.5),
+		Size=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ZIndex=4},ensureArrHolder())
+	local holder=mk("Frame",{Name="Holder",Size=UDim2.fromOffset(18,18),
+		BackgroundTransparency=1,BorderSizePixel=0,Parent=bg})
 	local chevron=drawChevron(holder,16,WT)
 	local sc=mk("UIScale",{Scale=0},bg)
 	arrows[i]={bg=bg,holder=holder,chevron=chevron,sc=sc}
 	return arrows[i]
 end
-
 local function updateArrows()
 	local c=cam()
 	if not c then return end
 	if not CB.arrows or not CB.esp then
-		for i=1,16 do
-			local a=arrows[i]
-			if a and a.sc and a.sc.Scale>0.05 then tw(a.sc,0.4,{Scale=0}) end
-		end
+		for i=1,16 do local a=arrows[i] if a and a.sc and a.sc.Scale>0.05 then tw(a.sc,0.5,{Scale=0}) end end
 		return
 	end
 	local vp=c.ViewportSize
 	local center=Vector2.new(vp.X*0.5,vp.Y*0.5)
-	-- радиус FOV + небольшой зазор, чтобы стрелки были ЗА кругом
-	local fovRadius=CB.tbFov
-	local rad = fovRadius + 25
-	if rad < 100 then rad = 100 end
-	if rad > math.min(vp.X,vp.Y)*0.55 then rad=math.min(vp.X,vp.Y)*0.55 end
-
+	local rad = CB.tbFov + 25
+	if rad<100 then rad=100 end
+	if rad>math.min(vp.X,vp.Y)*0.55 then rad=math.min(vp.X,vp.Y)*0.55 end
 	local off={}
 	for _,p in ipairs(P:GetPlayers()) do
 		if p~=LP and isEnemy(p) then
@@ -1158,9 +1206,7 @@ local function updateArrows()
 			end
 		end
 	end
-	table.sort(off,function(a,b)
-		return (a.pos-c.CFrame.Position).Magnitude<(b.pos-c.CFrame.Position).Magnitude
-	end)
+	table.sort(off,function(a,b) return (a.pos-c.CFrame.Position).Magnitude<(b.pos-c.CFrame.Position).Magnitude end)
 	for i=1,16 do
 		local entry=arrows[i]
 		if not entry then getArrow(i) entry=arrows[i] end
@@ -1169,16 +1215,14 @@ local function updateArrows()
 			if dt then
 				local pos=center+dt.dir*rad
 				local rot=math.deg(math.atan2(dt.dir.Y,dt.dir.X))
-				tw(entry.bg,0.4,{Position=UDim2.fromOffset(pos.X,pos.Y)})
-				tw(entry.holder,0.4,{Rotation=rot})
+				tw(entry.bg,0.5,{Position=UDim2.fromOffset(pos.X,pos.Y)})
+				tw(entry.holder,0.5,{Rotation=rot})
 				local col=ec()
-				for _,ln in ipairs(entry.chevron) do
-					tw(ln,0.4,{BackgroundColor3=col})
-				end
-				if entry.sc.Scale<0.9 then tw(entry.sc,0.5,{Scale=1}) end
-				if entry.bg.Size.X.Offset<10 then tw(entry.bg,0.5,{Size=UDim2.fromOffset(18,18)}) end
+				for _,ln in ipairs(entry.chevron) do tw(ln,0.5,{BackgroundColor3=col}) end
+				if entry.sc.Scale<0.9 then tw(entry.sc,0.6,{Scale=1}) end
+				if entry.bg.Size.X.Offset<10 then tw(entry.bg,0.6,{Size=UDim2.fromOffset(18,18)}) end
 			else
-				if entry.sc.Scale>0.05 then tw(entry.sc,0.45,{Scale=0}) end
+				if entry.sc.Scale>0.05 then tw(entry.sc,0.55,{Scale=0}) end
 			end
 		end
 	end
@@ -1191,27 +1235,24 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- FOV CIRCLE — animate
+-- FOV CIRCLE
 -- =========================================================
 local FOV=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
-	Size=UDim2.fromOffset(280,280),BackgroundTransparency=1,BorderSizePixel=0,
-	Visible=false,ZIndex=2},G)
+	Size=UDim2.fromOffset(280,280),BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=2},G)
 uc(FOV,5000)
 local FOVSt=sk(FOV,WT,1.5,0.4)
 local FOVScale=mk("UIScale",{Scale=1},FOV)
 task.spawn(function()
 	while G and G.Parent and FOV and FOV.Parent do
 		if FOV.Visible then
-			tw(FOVSt,TweenInfo.new(1.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Transparency=0.75,Thickness=1})
-			tw(FOVScale,TweenInfo.new(1.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1.008})
-			task.wait(1.6)
+			tw(FOVSt,TweenInfo.new(2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Transparency=0.75,Thickness=1})
+			tw(FOVScale,TweenInfo.new(2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1.008})
+			task.wait(2)
 			if not (G and G.Parent and FOV and FOV.Parent) then break end
-			tw(FOVSt,TweenInfo.new(1.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Transparency=0.3,Thickness=1.7})
-			tw(FOVScale,TweenInfo.new(1.6,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1})
-			task.wait(1.6)
-		else
-			task.wait(0.6)
-		end
+			tw(FOVSt,TweenInfo.new(2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Transparency=0.3,Thickness=1.7})
+			tw(FOVScale,TweenInfo.new(2,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut),{Scale=1})
+			task.wait(2)
+		else task.wait(0.6) end
 	end
 end)
 
@@ -1268,7 +1309,6 @@ task.spawn(function()
 		if ok and res then Controls=res break end
 		task.wait(0.2)
 	end
-	if Controls then print("[Finis] controls OK") else warn("[Finis] controls FAILED") end
 end)
 
 local FS={bv=nil,bg=nil}
@@ -1280,15 +1320,11 @@ local function startFly()
 	local bv=Instance.new("BodyVelocity")
 	bv.Name="FinisFlyBV"
 	bv.MaxForce=Vector3.new(5e4,5e4,5e4)
-	bv.P=1e4
-	bv.Velocity=Vector3.new(0,0,0)
-	bv.Parent=hr
+	bv.P=1e4 bv.Velocity=Vector3.new(0,0,0) bv.Parent=hr
 	local bg=Instance.new("BodyGyro")
 	bg.Name="FinisFlyBG"
 	bg.MaxTorque=Vector3.new(5e5,5e5,5e5)
-	bg.P=5e3 bg.D=500
-	bg.CFrame=hr.CFrame
-	bg.Parent=hr
+	bg.P=5e3 bg.D=500 bg.CFrame=hr.CFrame bg.Parent=hr
 	h.PlatformStand=true
 	FS.bv=bv FS.bg=bg
 end
@@ -1378,9 +1414,7 @@ task.spawn(function()
 	end
 end)
 
--- =========================================================
--- TRIGGERBOT (только враги)
--- =========================================================
+-- TRIGGER
 local lastF=0
 local function getAny(fv)
 	local c=cam()
@@ -1399,7 +1433,7 @@ local function getAny(fv)
 					local sp,on=c:WorldToViewportPoint(rt.Position)
 					if on and sp.Z>0 then
 						local d=(Vector2.new(sp.X,sp.Y)-cn).Magnitude
-						if d<bd then bd=d bs={h=hd,r=rt,ch=ch} end
+						if d<bd then bd=d bs={h=hd,r=rt,ch=ch,plr=p} end
 					end
 				end
 			end
@@ -1427,11 +1461,10 @@ R.Heartbeat:Connect(function()
 			local n=os.clock()
 			if tool and n-lastF>=CB.tbDel then
 				lastF=n
-				-- запомнить выстрел
 				local myH=ch:FindFirstChild("HumanoidRootPart")
 				local dist=0
 				if myH and t.r then dist=(myH.Position-t.r.Position).Magnitude end
-				rememberShot(t.ch and t.ch:GetPlayerFromCharacter() or nil, tool.Name or "unknown", dist)
+				rememberShot(t.plr, tool.Name or "unknown", dist)
 				pcall(function() tool:Activate() end)
 			end
 		end
@@ -1441,16 +1474,11 @@ end)
 R.RenderStepped:Connect(function()
 	local a,r=false,0
 	if CB.tb then a=true r=math.max(r,CB.tbFov) end
-	local wasVisible=FOV.Visible
 	FOV.Visible=a and CB.showFov
-	if r>0 then
-		FOV.Size=UDim2.fromOffset(r*2,r*2)
-	end
+	if r>0 then FOV.Size=UDim2.fromOffset(r*2,r*2) end
 end)
 
--- =========================================================
--- TRACER + FAST SWITCH + AMMO
--- =========================================================
+-- TRACER / FAST SWITCH / AMMO
 local TRC=Instance.new("Folder")
 TRC.Name="FinisTracers" TRC.Parent=W
 local lastT=0
@@ -1472,8 +1500,8 @@ local function drawTracer(f,to)
 	part.Anchored=true part.CanCollide=false part.CanQuery=false part.CastShadow=false
 	part.Material=Enum.Material.Neon part.Color=Color3.fromRGB(255,245,120)
 	part.Size=Vector3.new(0.12,0.12,d) part.CFrame=CFrame.new((f+to)*0.5,to) part.Transparency=0.1 part.Parent=TRC
-	tw(part,0.6,{Transparency=1})
-	task.delay(0.65,function() if part and part.Parent then part:Destroy() end end)
+	tw(part,0.7,{Transparency=1})
+	task.delay(0.75,function() if part and part.Parent then part:Destroy() end end)
 end
 
 local lastSw=0
@@ -1503,16 +1531,15 @@ local function hookT(t)
 	if t:GetAttribute("FH") then return end
 	t:SetAttribute("FH",true)
 	t.Activated:Connect(function()
+		playGunSound()
 		if not CB.tb then
-			-- обычный выстрел игрока — запомнить для kill feed
 			local myCh=LP.Character
 			local myH=myCh and myCh:FindFirstChild("HumanoidRootPart")
 			if myH then
 				local tgt=getAny(5000)
-				if tgt and tgt.ch then
-					local plr=P:GetPlayerFromCharacter(tgt.ch)
+				if tgt and tgt.plr then
 					local dist=(myH.Position-tgt.r.Position).Magnitude
-					rememberShot(plr,t.Name or "unknown",dist)
+					rememberShot(tgt.plr,t.Name or "unknown",dist)
 				end
 			end
 		end
@@ -1525,23 +1552,15 @@ local function hookT(t)
 end
 local function installTools(ch)
 	if not ch then return end
-	for _,c in ipairs(ch:GetDescendants()) do
-		if c:IsA("Tool") then hookT(c) end
-	end
-	ch.ChildAdded:Connect(function(c)
-		if c:IsA("Tool") then task.wait(0.05) hookT(c) end
-	end)
+	for _,c in ipairs(ch:GetDescendants()) do if c:IsA("Tool") then hookT(c) end end
+	ch.ChildAdded:Connect(function(c) if c:IsA("Tool") then task.wait(0.05) hookT(c) end end)
 end
 if LP.Character then installTools(LP.Character) end
 LP.CharacterAdded:Connect(function(ch) task.wait(0.3) installTools(ch) end)
 local function hookBP(bp)
 	if not bp then return end
-	for _,c in ipairs(bp:GetChildren()) do
-		if c:IsA("Tool") then hookT(c) end
-	end
-	bp.ChildAdded:Connect(function(c)
-		if c:IsA("Tool") then task.wait(0.05) hookT(c) end
-	end)
+	for _,c in ipairs(bp:GetChildren()) do if c:IsA("Tool") then hookT(c) end end
+	bp.ChildAdded:Connect(function(c) if c:IsA("Tool") then task.wait(0.05) hookT(c) end end)
 end
 hookBP(LP:FindFirstChild("Backpack"))
 LP.ChildAdded:Connect(function(c) if c.Name=="Backpack" then hookBP(c) end end)
@@ -1590,7 +1609,7 @@ task.spawn(function()
 				end
 			end
 		end
-		task.wait(0.2)
+		task.wait(0.25)
 	end
 end)
 
@@ -1604,11 +1623,12 @@ do
 	addToggle(c,1,"esp_en","",false,function(o) CB.esp=o end)
 	addToggle(c,2,"esp_wall","",true,function(o) CB.espWall=o end)
 	addToggle(c,3,"esp_txt","",true,function(o) CB.espText=o end)
-	addToggle(c,4,"esp_arrows","",true,function(o) CB.arrows=o end)
-	addSelector(c,5,"esp_col",{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},
+	addToggle(c,4,"esp_hp","",true,function(o) CB.espHP=o end)
+	addToggle(c,5,"esp_arrows","",true,function(o) CB.arrows=o end)
+	addSelector(c,6,"esp_col",{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},
 		{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},1,function(v) CB.espCol=v end)
-	addSelector(c,6,"esp_style",ESP_STYLES,ESP_STYLES,1,function(v) CB.espStyle=v end)
-	addSelector(c,7,"esp_enemy",{"Auto","Team","All"},{"Auto","Team","All"},1,function(v)
+	addSelector(c,7,"esp_style",ESP_STYLES,ESP_STYLES,1,function(v) CB.espStyle=v end)
+	addSelector(c,8,"esp_enemy",{"Auto","Team","All"},{"Auto","Team","All"},1,function(v)
 		CB.enemy=(v=="Auto") and "Auto" or (v=="Team" and "Team" or "All")
 	end)
 
@@ -1619,8 +1639,7 @@ do
 	addSec(p,5,"sec_kill")
 	local c3=addCard(p,6)
 	addToggle(c3,1,"kf_kill","",true,function(o) CB.killMsg=o end)
-	addToggle(c3,2,"kf_dmg","",true,function(o) CB.dmgMsg=o end)
-	addToggle(c3,3,"kf_vic","",true,function(o) CB.victimMsg=o end)
+	addToggle(c3,2,"kf_dmg","",false,function(o) CB.dmgMsg=o end)
 end
 
 do
@@ -1674,6 +1693,9 @@ do
 	local c2=addCard(p,4)
 	addToggle(c2,1,"fs_en","",false,function(o) CB.fastSwitch=o end)
 	addSlider(c2,2,"fs_delay",0,500,50," ms",function(v) CB.fsDelay=v/1000 end)
+	addSec(p,5,"sec_sound")
+	local c3=addCard(p,6)
+	addToggle(c3,1,"snd_en","",false,function(o) CB.gunSound=o end)
 end
 
 do
@@ -1697,14 +1719,14 @@ local function switchPage(n)
 	end
 	for nm,o in pairs(NB) do
 		local s=(nm==n)
-		tw(o.lbl,0.4,{TextColor3=s and TX or TD})
+		tw(o.lbl,0.45,{TextColor3=s and TX or TD})
 		o.lbl.Font=s and Enum.Font.GothamBold or Enum.Font.GothamMedium
-		tw(o.ul,TweenInfo.new(0.5,Enum.EasingStyle.Back),{Size=UDim2.new(s and 0.45 or 0,0,0,3)})
+		tw(o.ul,TweenInfo.new(0.55,Enum.EasingStyle.Back),{Size=UDim2.new(s and 0.45 or 0,0,0,3)})
 	end
 	local np=NP[n]
 	if np then
 		np.Position=UDim2.fromOffset(0,22) np.Visible=true
-		tw(np,TweenInfo.new(0.5,Enum.EasingStyle.Quart),{Position=UDim2.fromOffset(0,0)})
+		tw(np,TweenInfo.new(0.55,Enum.EasingStyle.Quart),{Position=UDim2.fromOffset(0,0)})
 		CURR=np
 	end
 end
