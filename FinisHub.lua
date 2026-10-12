@@ -1,5 +1,5 @@
--- language: Lua, file: finis_hub.lua, target: Roblox executor (synapse-compatible)
-print("[Finis] load v6.1")
+-- language: Lua, file: finis_hub.lua, target: Roblox executor (synapse/delta/fluxus-compatible)
+print("[Finis] load v8")
 
 local P=game:GetService("Players")
 local U=game:GetService("UserInputService")
@@ -17,13 +17,13 @@ local LP=P.LocalPlayer
 -- =========================================================
 local DECAL_ID="rbxassetid://108600815593933"
 local TEXTURE_ID="rbxassetid://134327784464327"
-local GUN_SOUND_ID="rbxassetid://134013251757271"
+local GUN_SOUND_ID="rbxassetid://73952326343388"
 local LOGO_ID=DECAL_ID
 
 -- =========================================================
 -- STATE
 -- =========================================================
-local G -- FIX 1: forward-declare, fallback-цикл ниже видит эту же переменную
+local G -- forward-declare: fallback-циклы ниже видят эту же переменную
 
 local CB={
 	esp=false, espWall=true, espText=true, espCol="Pink", espStyle="Chams",
@@ -44,6 +44,14 @@ local CB={
 	showFov=true,
 }
 
+local AB={enabled=false, fov=180, smooth=0.45, bone="Head", wall=false, pred=0.1, lock=true}
+local SA={enabled=false, fov=200, bone="Head", wall=false, chance=100, pred=0.1, mode="Smart"}
+local HB={enabled=false, size=8, part="HumanoidRootPart", show=false}
+local AMMO={value=9999, swap=true, threshold=2}
+local WS={enabled=false, npc=true}          -- wall shot
+local BR={rate=30, busy=false}              -- burst fire (выстрелов в секунду)
+local AK={enabled=true}                     -- anti-kick, по умолчанию ВКЛ (место без банов, только 267-кик)
+
 -- TEAM CHECK
 local function getTeamClass(plr)
 	if not plr.Team then return "none" end
@@ -60,7 +68,7 @@ end
 local function isEnemy(p)
 	if p==LP then return false end
 	if CB.enemy=="All" then return true end
-	if CB.enemy=="Team" then -- FIX 4: строгая проверка по Roblox-командам
+	if CB.enemy=="Team" then
 		if not p.Team or not LP.Team then return true end
 		return p.Team~=LP.Team
 	end
@@ -87,7 +95,6 @@ local function cam() return W.CurrentCamera end
 
 task.spawn(function() pcall(function() CP:PreloadAsync({DECAL_ID,TEXTURE_ID,GUN_SOUND_ID}) end) end)
 
--- FIX 2: реестр логотипов — fallback обновляет уже созданные ImageLabel'ы
 local logoImgs={}
 local function regLogo(im)
 	im.Image=LOGO_ID
@@ -117,18 +124,18 @@ task.spawn(function()
 end)
 
 -- =========================================================
--- GUN SOUND — пул клонов
+-- GUN SOUND — пул + Play + PlayLocalSound + PlayOnRemove
 -- =========================================================
 local soundPool={}
 local soundPoolIdx=1
-local SOUND_POOL_SIZE=8
+local SOUND_POOL_SIZE=10
 
 local gunSoundTemplate=Instance.new("Sound")
 gunSoundTemplate.Name="FinisGunSound"
 gunSoundTemplate.SoundId=GUN_SOUND_ID
 gunSoundTemplate.Volume=3
 gunSoundTemplate.Looped=false
-gunSoundTemplate.Parent=SS
+gunSoundTemplate.Parent=W
 
 task.spawn(function()
 	local t0=os.clock()
@@ -138,36 +145,53 @@ task.spawn(function()
 		for i=1,SOUND_POOL_SIZE do
 			local c=gunSoundTemplate:Clone()
 			c.Volume=3
-			c.Parent=SS
+			c.Parent=W
 			soundPool[i]=c
 		end
 	else
-		warn("[Finis] gun sound NOT LOADED — asset blocked")
+		warn("[Finis] gun sound NOT LOADED after 10s — asset приватный или удалён. нужен публичный audio ID")
 	end
 end)
 
 local lastSoundPlay=0
-local function playGunSound()
-	if not CB.gunSound then return end
-	if not gunSoundTemplate.IsLoaded then return end
+local function playGunSound(force)
+	if not CB.gunSound and not force then return end
 	if os.clock()-lastSoundPlay<0.03 then return end
 	lastSoundPlay=os.clock()
 
 	local s=soundPool[soundPoolIdx]
-	soundPoolIdx=soundPoolIdx+1
-	if soundPoolIdx>SOUND_POOL_SIZE then soundPoolIdx=1 end
 	if not s or not s.Parent then
 		s=gunSoundTemplate:Clone()
-		s.Parent=SS
+		s.Volume=3
+		s.Parent=W
+		soundPool[soundPoolIdx]=s
 	end
-	pcall(function()
+	soundPoolIdx=soundPoolIdx+1
+	if soundPoolIdx>SOUND_POOL_SIZE then soundPoolIdx=1 end
+
+	-- путь 1: обычный Play
+	local played=false
+	played=pcall(function()
 		s.TimePosition=0
 		s.PlaybackSpeed=0.95+math.random()*0.1
 		s:Play()
 	end)
+	-- путь 2: PlayLocalSound — движковый локальный плеер
+	if not played then
+		pcall(function() SS:PlayLocalSound(s) end)
+	end
+	-- путь 3: PlayOnRemove — если :Play() блокируется экзекутором
+	if not gunSoundTemplate.IsLoaded then
+		pcall(function()
+			local f=gunSoundTemplate:Clone()
+			f.Volume=3
+			f.PlayOnRemove=true
+			f.Parent=W
+			f:Destroy()
+		end)
+	end
 end
 
--- FIX 1: теперь G объявлен наверху — цикл живой
 task.spawn(function()
 	local tries=0
 	while G and G.Parent and tries<6 do
@@ -201,42 +225,70 @@ local LS={
 	en={sub="INTERNAL",tab_aim="AimBot",tab_vis="Visuals",tab_bl="Blatant",tab_gn="Guns",tab_ms="Misc",
 		sec_trigger="Triggerbot",sec_spin="Spin",sec_esp="Player ESP",sec_tracer="Tracer",sec_kill="Notifications",sec_sound="Sound",
 		sec_char="Character",sec_flight="Flight",sec_vehicle="Vehicle",sec_ammo="Ammo",sec_fswitch="Fast Switch",
-		sec_ui="Interface",sec_lang="Language",t_on="Enabled",
+		sec_ui="Interface",sec_lang="Language",sec_aimbot="Aimbot",sec_silent="Silent Aim",sec_hitbox="Hitbox",
+		sec_burst="Burst Fire",sec_wall="Wall Shot",sec_prot="Protection",
+		t_on="Enabled",
 		tg_en="Auto-shoot",tg_fov="FOV",tg_delay="Delay",tg_aim="Lock camera",
 		sp_en="Spin",sp_speed="Speed",
 		esp_en="Enable ESP",esp_wall="Wallhack",esp_txt="Distance text",esp_col="Color",
 		esp_style="Style",esp_enemy="Target mode",esp_arrows="Arrows",esp_hp="HP bar",esp_arad="Arrow radius",
 		tr_en="Tracer",
 		kf_kill="Kill messages",kf_dmg="Damage messages",
-		snd_en="Custom shot sound",
+		snd_en="Custom shot sound",snd_test="Test sound",
 		ms_en="Speed hack",ms_val="Value",nc_en="Noclip",aj_en="Air jump",
 		fl_en="Fly",fl_spd="Speed",fl_mode="Mode",fl_cam="Camera",fl_vert="Vertical",
 		ch_en="Car hack",ch_spd="Max speed",
-		am_en="Ammo",nr_en="No reload",fs_en="Auto switch",fs_delay="Delay",
+		am_en="Infinite ammo",nr_en="No reload",am_val="Freeze value",am_swap="Swap bypass",
+		am_thresh="Swap at",
+		fs_en="Auto switch",fs_delay="Delay",
+		ab_en="Camera aimbot",ab_fov="FOV",ab_smooth="Smoothness",ab_bone="Target bone",
+		ab_wall="Wall check",ab_pred="Prediction",ab_lock="Target lock",
+		sa_en="Silent aim",sa_fov="FOV",sa_bone="Target bone",sa_wall="Wall check",
+		sa_chance="Hit chance",sa_pred="Prediction",sa_mode="Remote filter",sa_smart="Smart",sa_all="All",
+		hb_en="Hitbox expander",hb_size="Size",hb_part="Part",hb_hrp="Root",hb_head="Head",hb_all="All parts",
+		hb_show="Show hitboxes",
+		bone_head="Head",bone_torso="Torso",bone_root="Root",bone_random="Random",
+		burst_fire="FIRE ALL  (G)",burst_rate="Shots per second",
+		ws_en="Shoot through walls",ws_npc="Include NPCs",
+		ak_en="Anti-kick (267)",
 		ui_scale="Menu scale",fov_circle="FOV circle",
 		lang_choose="Language"},
 	ru={sub="ИНТЕРНАЛ",tab_aim="Аим",tab_vis="Визуалы",tab_bl="Блат",tab_gn="Оружие",tab_ms="Разное",
 		sec_trigger="Триггербот",sec_spin="Спин",sec_esp="ESP Игроков",sec_tracer="Трассер",sec_kill="Уведомления",sec_sound="Звук",
 		sec_char="Персонаж",sec_flight="Полёт",sec_vehicle="Машина",sec_ammo="Патроны",sec_fswitch="Автосмена",
-		sec_ui="Интерфейс",sec_lang="Язык",t_on="Включено",
+		sec_ui="Интерфейс",sec_lang="Язык",sec_aimbot="Аимбот",sec_silent="Сайлент аим",sec_hitbox="Хитбокс",
+		sec_burst="Очередь",sec_wall="Валлшот",sec_prot="Защита",
+		t_on="Включено",
 		tg_en="Авто-выстрел",tg_fov="FOV",tg_delay="Задержка",tg_aim="Крутить камеру",
 		sp_en="Спин",sp_speed="Скорость",
 		esp_en="Включить ESP",esp_wall="Сквозь стены",esp_txt="Дистанция",esp_col="Цвет",
 		esp_style="Стиль",esp_enemy="Режим",esp_arrows="Стрелки",esp_hp="HP полоска",esp_arad="Радиус стрелок",
 		tr_en="Трассер",
 		kf_kill="Убийства",kf_dmg="Урон",
-		snd_en="Свой звук выстрела",
+		snd_en="Свой звук выстрела",snd_test="Тест звука",
 		ms_en="Скорость",ms_val="Значение",nc_en="Сквозь стены",aj_en="Прыжок",
 		fl_en="Полёт",fl_spd="Скорость",fl_mode="Режим",fl_cam="Камера",fl_vert="Вертикальный",
 		ch_en="Ускорение",ch_spd="Скорость машины",
-		am_en="Патроны",nr_en="Без перезарядки",fs_en="Автосмена",fs_delay="Задержка",
+		am_en="Бесконечные патроны",nr_en="Без перезарядки",am_val="Значение",am_swap="Свап-байпас",
+		am_thresh="Свап на",
+		fs_en="Автосмена",fs_delay="Задержка",
+		ab_en="Аимбот (камера)",ab_fov="FOV",ab_smooth="Плавность",ab_bone="Точка прицела",
+		ab_wall="Проверка стен",ab_pred="Предикт",ab_lock="Фикс цели",
+		sa_en="Сайлент аим",sa_fov="FOV",sa_bone="Точка прицела",sa_wall="Проверка стен",
+		sa_chance="Шанс попадания",sa_pred="Предикт",sa_mode="Фильтр ремоутов",sa_smart="Умный",sa_all="Все",
+		hb_en="Хитбоксы",hb_size="Размер",hb_part="Часть",hb_hrp="Корень",hb_head="Голова",hb_all="Все части",
+		hb_show="Показывать хитбоксы",
+		bone_head="Голова",bone_torso="Торс",bone_root="Корень",bone_random="Рандом",
+		burst_fire="ВЫСТРЕЛИТЬ ВСЁ  (G)",burst_rate="Выстрелов в секунду",
+		ws_en="Стрельба сквозь стены",ws_npc="Включая NPC",
+		ak_en="Анти-кик (267)",
 		ui_scale="Размер меню",fov_circle="FOV круг",
 		lang_choose="Язык"}
 }
 local function TR(k) local p=LS[Lang] or LS.en return p[k] or k end
 local textReg={}
 local function regText(lbl,key) table.insert(textReg,{lbl=lbl,key=key}) lbl.Text=TR(key) end
-local function dTxt(k) local p=LS[Lang] return (p and p[k]) or k end -- FIX 3: перевод для disp-ключей селекторов
+local function dTxt(k) local p=LS[Lang] return (p and p[k]) or k end
 
 G=mk("ScreenGui",{Name="FinisHub",ResetOnSpawn=false,IgnoreGuiInset=true,
 	DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},PG)
@@ -271,10 +323,10 @@ pcall(function()
 	local IntroLogo=mk("ImageLabel",{Name="IntroLogo",AnchorPoint=Vector2.new(0.5,0.5),
 		Position=UDim2.new(0.5,0,0.08,0),Size=UDim2.fromOffset(110,110),BackgroundTransparency=1,
 		ImageColor3=WT,ImageTransparency=0,ScaleType=Enum.ScaleType.Fit,ZIndex=5010},CX)
-	regLogo(IntroLogo) -- FIX 2
+	regLogo(IntroLogo)
 	local IntroLogoScale=mk("UIScale",{Scale=0.3},IntroLogo)
 
-	local HB=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.4,0),
+	local HBseg=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.4,0),
 		Size=UDim2.fromOffset(170,45),BackgroundTransparency=1,ZIndex=5006},CX)
 	local PTS={{8,22},{54,22},{64,31},{74,5},{86,22},{162,22}}
 	local hbSegs={}
@@ -287,7 +339,7 @@ pcall(function()
 		local cy=(p1[2]+p2[2])*0.5
 		local s=mk("Frame",{AnchorPoint=Vector2.new(0.5,0.5),
 			Position=UDim2.fromOffset(cx,cy),Size=UDim2.fromOffset(0,1.5),
-			BackgroundColor3=WT,BackgroundTransparency=1,BorderSizePixel=0,Rotation=ang,ZIndex=5007},HB)
+			BackgroundColor3=WT,BackgroundTransparency=1,BorderSizePixel=0,Rotation=ang,ZIndex=5007},HBseg)
 		uc(s,1)
 		local glow=mk("UIStroke",{Color=ACH,Thickness=3,Transparency=1},s)
 		table.insert(hbSegs,{f=s,len=len,glow=glow})
@@ -308,8 +360,9 @@ pcall(function()
 
 	local FL=mk("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,28,1,-28),Size=UDim2.fromOffset(400,140),BackgroundTransparency=1,ZIndex=5006},OV)
 	local fn={"init renderer.dll","injecting payload.sys","loading config.finis","init memory.engine",
-		"setup modules.lua","esp.chams","esp.arrows","esp.smooth","killfeed.module","notif.engine",
-		"gun.sound.pack","triggerbot.auto","noclip.bypass","fly.engine","carhack.turbo","ready."}
+		"setup modules.lua","esp.chams","esp.arrows","silentaim.hook","aimbot.predict","hitbox.expand",
+		"wallshot.rayhook","burst.dump","antikick.shield","killfeed.module","notif.engine",
+		"gun.sound.pack","triggerbot.auto","noclip.bypass","fly.engine","carhack.turbo","ammo.freeze","ready."}
 	local fL={}
 	for i=1,8 do
 		local l=mk("TextLabel",{Size=UDim2.new(1,0,0,14),Position=UDim2.fromOffset(0,(i-1)*16),
@@ -454,7 +507,7 @@ end)
 local TOP=mk("Frame",{Size=UDim2.new(1,0,0,50),BackgroundTransparency=1,ZIndex=901},MENU)
 local HeaderLogo=mk("ImageLabel",{Name="HeaderLogo",Size=UDim2.fromOffset(32,32),Position=UDim2.fromOffset(14,9),
 	BackgroundTransparency=1,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=902},TOP)
-regLogo(HeaderLogo) -- FIX 2
+regLogo(HeaderLogo)
 mk("TextLabel",{Size=UDim2.fromOffset(60,18),Position=UDim2.fromOffset(52,16),BackgroundTransparency=1,
 	Font=Enum.Font.GothamBold,Text="Finis",TextColor3=TX,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=902},TOP)
 local lblInt=mk("TextLabel",{Size=UDim2.fromOffset(90,18),Position=UDim2.fromOffset(90,16),BackgroundTransparency=1,
@@ -643,14 +696,14 @@ local function addSelector(p,o,tkey,opts,disp,di,cb)
 		BackgroundColor3=Color3.fromRGB(30,30,36),BorderSizePixel=0,ZIndex=905},r)
 	uc(bx,6) sk(bx,BD,1,0.2)
 	local vL=mk("TextLabel",{Size=UDim2.new(1,-24,1,0),Position=UDim2.fromOffset(8,0),BackgroundTransparency=1,
-		Font=Enum.Font.Gotham,Text=dTxt(disp[di] or disp[1]),TextColor3=TX,TextSize=12, -- FIX 3: перевод disp-ключей
+		Font=Enum.Font.Gotham,Text=dTxt(disp[di] or disp[1]),TextColor3=TX,TextSize=12,
 		TextXAlignment=Enum.TextXAlignment.Left,ZIndex=906},bx)
 	local ar=mk("TextLabel",{Size=UDim2.fromOffset(20,20),Position=UDim2.new(1,-22,0.5,-10),BackgroundTransparency=1,
 		Font=Enum.Font.GothamBold,Text="v",TextColor3=TD,TextSize=12,ZIndex=906},bx)
 	local i=di or 1
 	local function ap(n,sil)
 		i=((n-1)%#opts)+1
-		vL.Text=dTxt(disp[i]) -- FIX 3
+		vL.Text=dTxt(disp[i])
 		if not sil and cb then cb(opts[i],i) end
 	end
 	ap(i,true)
@@ -664,6 +717,22 @@ local function addSelector(p,o,tkey,opts,disp,di,cb)
 		task.delay(0.45,function() if ar.Parent then ar.Rotation=0 end end)
 	end)
 	return{get=function() return opts[i] end,set=function(n) ap(n) end}
+end
+
+local function addBtn(p,o,tkey,cb)
+	local r=mk("TextButton",{Size=UDim2.new(1,0,0,44),BackgroundColor3=Color3.fromRGB(28,28,34),
+		BorderSizePixel=0,Text="",AutoButtonColor=false,LayoutOrder=o,ZIndex=904},p)
+	uc(r,8) sk(r,BD,1,0.2)
+	local l=mk("TextLabel",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Font=Enum.Font.GothamSemibold,
+		Text="",TextColor3=TX,TextSize=13,ZIndex=905},r)
+	regText(l,tkey)
+	r.MouseEnter:Connect(function() tw(r,0.25,{BackgroundColor3=Color3.fromRGB(36,36,44)}) end)
+	r.MouseLeave:Connect(function() tw(r,0.25,{BackgroundColor3=Color3.fromRGB(28,28,34)}) end)
+	r.MouseButton1Click:Connect(function()
+		tw(r,0.15,{BackgroundColor3=Color3.fromRGB(0,130,165)})
+		task.delay(0.15,function() tw(r,0.45,{BackgroundColor3=Color3.fromRGB(28,28,34)}) end)
+		if cb then cb() end
+	end)
 end
 
 local menuOpen=false
@@ -707,7 +776,7 @@ local PB=mk("TextButton",{Size=UDim2.fromScale(1,1),BackgroundColor3=PL,BorderSi
 uc(PB,10) sk(PB,Color3.fromRGB(35,35,45),1,0.1)
 local PILogo=mk("ImageLabel",{Name="PILogo",Size=UDim2.fromOffset(28,28),Position=UDim2.fromOffset(10,6),
 	BackgroundTransparency=1,ImageColor3=WT,ScaleType=Enum.ScaleType.Fit,ZIndex=1002},PB)
-regLogo(PILogo) -- FIX 2
+regLogo(PILogo)
 local PILogoScale=mk("UIScale",{Scale=1},PILogo)
 task.spawn(function()
 	while G and G.Parent and PILogo and PILogo.Parent do
@@ -815,7 +884,6 @@ local recentShots={}
 local myKills=0
 local lastHp={}
 
--- FIX: чистка lastHp при выходе игрока
 P.PlayerRemoving:Connect(function(p)
 	lastHp[p]=nil
 end)
@@ -830,7 +898,7 @@ end
 local function findRecentShot(victim)
 	local now=os.clock()
 	for _,s in ipairs(recentShots) do
-		if s.victim==victim and now-s.t<0.8 then return s end -- FIX: окно 1.5s -> 0.8s
+		if s.victim==victim and now-s.t<0.8 then return s end
 	end
 	return nil
 end
@@ -855,7 +923,7 @@ task.spawn(function()
 										addKill("-"..dmg.."  "..p.Name,
 											shot.weapon.."  •  "..math.floor(shot.distance).." studs", RED)
 									end
-									if cur<=0 and CB.killMsg and shot.dmg>=10 then -- FIX: килл только если наш урон >=10
+									if cur<=0 and CB.killMsg and shot.dmg>=10 then
 										myKills=myKills+1
 										addKill("KILL  "..p.Name,
 											shot.weapon.."  •  "..math.floor(shot.distance).." studs  •  #"..myKills, GRN)
@@ -1126,7 +1194,7 @@ local function updateTarget(plr,ch)
 			bg.Enabled=true
 			if e.hpFill and hum then
 				local ratio=math.clamp(hum.Health/math.max(hum.MaxHealth,100),0,1)
-				e.hpFill.Size=UDim2.new(1,0,ratio,0) -- FIX: прямое присваивание, без спама тwin'ов
+				e.hpFill.Size=UDim2.new(1,0,ratio,0)
 				local hpCol=GRN
 				if ratio<0.3 then hpCol=RED
 				elseif ratio<0.6 then hpCol=ORG
@@ -1211,7 +1279,7 @@ local function updateArrows()
 	end
 	local vp=c.ViewportSize
 	local center=Vector2.new(vp.X*0.5,vp.Y*0.5)
-	local rad=CB.arrowRad -- FIX: свой радиус, не привязан к tbFov
+	local rad=CB.arrowRad
 	if rad<60 then rad=60 end
 	if rad>math.min(vp.X,vp.Y)*0.55 then rad=math.min(vp.X,vp.Y)*0.55 end
 	local off={}
@@ -1282,7 +1350,9 @@ task.spawn(function()
 	end
 end)
 
--- FUNCTIONS
+-- =========================================================
+-- NOCLIP / SPIN / FLY / AIR / CAR
+-- =========================================================
 local function forceNoclip()
 	local ch=LP.Character
 	if not ch or not ch.Parent then return end
@@ -1388,7 +1458,7 @@ R.Heartbeat:Connect(function()
 	local fwd=Vector3.new(look.X,0,look.Z)
 	if fwd.Magnitude>0.001 then fwd=fwd.Unit else fwd=Vector3.new(0,0,-1) end
 	local rst=Vector3.new(right.X,0,right.Z)
-	if rst.Magnitude>0.001 then rst=rst.Unit else rst=Vector3.new(1,0,0) end
+	if rst.Magnitude>0.001 then rst=rst.Unit else rst=rst.new(1,0,0) end
 	local dir=Vector3.new(0,0,0)
 	if CB.flyMode=="Vertical" then
 		if mz<-0.1 then dir=dir+Vector3.new(0,1,0) end
@@ -1436,7 +1506,383 @@ task.spawn(function()
 	end
 end)
 
--- TRIGGER
+-- =========================================================
+-- AIM CORE
+-- =========================================================
+local Mouse=LP:GetMouse()
+local wsBypass=false -- флаг: наши внутренние рейкасты не перехватываются валлшотом
+
+local function getBonePart(ch,bone)
+	if bone=="Head" then
+		return ch:FindFirstChild("Head") or ch:FindFirstChild("HumanoidRootPart")
+	elseif bone=="Torso" then
+		return ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso") or ch:FindFirstChild("HumanoidRootPart")
+	elseif bone=="Random" then
+		local opts={}
+		local h=ch:FindFirstChild("Head") if h then table.insert(opts,h) end
+		local t=ch:FindFirstChild("UpperTorso") or ch:FindFirstChild("Torso") if t then table.insert(opts,t) end
+		local r=ch:FindFirstChild("HumanoidRootPart") if r then table.insert(opts,r) end
+		if #opts>0 then return opts[math.random(1,#opts)] end
+		return ch:FindFirstChild("HumanoidRootPart")
+	end
+	return ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function partVisible(part,char)
+	local c=cam()
+	if not c then return true end
+	local o=c.CFrame.Position
+	local dir=part.Position-o
+	local dist=dir.Magnitude
+	if dist<0.5 then return true end
+	local rp=RaycastParams.new()
+	rp.FilterType=Enum.RaycastFilterType.Exclude
+	local ex={}
+	if LP.Character then table.insert(ex,LP.Character) end
+	table.insert(ex,char)
+	rp.FilterDescendantsInstances=ex
+	rp.RespectCanCollide=false
+	wsBypass=true
+	local hit=W:Raycast(o,dir,rp)
+	wsBypass=false
+	if not hit then return true end
+	if hit.Instance:IsDescendantOf(char) then return true end
+	return (hit.Position-o).Magnitude >= dist-1
+end
+
+local function predictPart(part,pred)
+	local ok,v=pcall(function() return part.AssemblyLinearVelocity end)
+	if ok and v and v.Magnitude>0.5 then
+		return part.Position + v*pred
+	end
+	return part.Position
+end
+
+local function acquireTarget(fovPx,useMouse,wallcheck,bone)
+	local c=cam()
+	if not c then return nil end
+	local vp=c.ViewportSize
+	local center
+	if useMouse then
+		local mp=U:GetMouseLocation()
+		center=Vector2.new(mp.X,mp.Y)
+	else
+		center=Vector2.new(vp.X*0.5,vp.Y*0.5)
+	end
+	local best=nil local bd=fovPx
+	for _,p in ipairs(P:GetPlayers()) do
+		if p~=LP and isEnemy(p) then
+			local ch=p.Character
+			local hum=ch and ch:FindFirstChildOfClass("Humanoid")
+			if ch and hum and hum.Health>0 then
+				local part=getBonePart(ch,bone)
+				if part then
+					local sp,on=c:WorldToViewportPoint(part.Position)
+					if on and sp.Z>0 then
+						local d=(Vector2.new(sp.X,sp.Y)-center).Magnitude
+						if d<bd and (not wallcheck or partVisible(part,ch)) then
+							bd=d best={plr=p,char=ch,part=part}
+						end
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+-- =========================================================
+-- WALL SHOT — хелперы для перехвата рейкастов
+-- =========================================================
+local function wallshotOriginNear(origin)
+	local ch=LP.Character
+	if not ch then return false end
+	local refs={}
+	local hrp=ch:FindFirstChild("HumanoidRootPart") if hrp then table.insert(refs,hrp.Position) end
+	local hd=ch:FindFirstChild("Head") if hd then table.insert(refs,hd.Position) end
+	local tool=ch:FindFirstChildOfClass("Tool")
+	if tool then local h=tool:FindFirstChild("Handle") if h then table.insert(refs,h.Position) end end
+	local c=cam() if c then table.insert(refs,c.CFrame.Position) end
+	for _,r in ipairs(refs) do
+		if (origin-r).Magnitude<15 then return true end
+	end
+	return false
+end
+
+local function buildCharInclude()
+	local inc={}
+	local myCh=LP.Character
+	for _,p in ipairs(P:GetPlayers()) do
+		if p~=LP and p.Character then table.insert(inc,p.Character) end
+	end
+	if WS.npc then
+		for _,m in ipairs(W:GetChildren()) do
+			if m:IsA("Model") and m~=myCh and m:FindFirstChildOfClass("Humanoid") then
+				table.insert(inc,m)
+			end
+		end
+	end
+	return inc
+end
+
+-- =========================================================
+-- SILENT AIM helpers
+-- =========================================================
+local silentTarget=nil
+
+local function holdingWeapon()
+	local ch=LP.Character
+	return ch~=nil and ch:FindFirstChildOfClass("Tool")~=nil
+end
+
+local REMOTE_PATS={"fire","shoot","shot","hit","bullet","gun","weapon","damage","attack","swing","knife","projectile"}
+local function remoteAllowed(self)
+	if SA.mode=="All" then return true end
+	local ok,n=pcall(function() return string.lower(self.Name) end)
+	if ok and n then
+		for _,pat in ipairs(REMOTE_PATS) do
+			if n:find(pat,1,true) then return true end
+		end
+	end
+	local ch=LP.Character
+	if ch and self:IsDescendantOf(ch) then return true end
+	local bp=LP:FindFirstChild("Backpack")
+	if bp and self:IsDescendantOf(bp) then return true end
+	return false
+end
+
+local function closure(f)
+	if newcclosure then return newcclosure(f) end
+	return f
+end
+
+-- =========================================================
+-- ЕДИНЫЙ __namecall ХУК: анти-кик + валлшот + сайлент аим
+-- =========================================================
+if hookmetamethod and getnamecallmethod then
+	local ok=pcall(function()
+		local old=hookmetamethod(game,"__namecall",closure(function(self,...)
+			local m=getnamecallmethod()
+
+			-- анти-кик: 267-кик идёт через LocalPlayer:Kick — глотаем
+			if AK.enabled and m=="Kick" and self==LP then
+				return nil
+			end
+
+			-- валлшот: рейкасты оружия пропускаем сквозь стены к персонажам
+			if WS.enabled and not wsBypass then
+				if m=="Raycast" then
+					local origin,direction=...
+					if typeof(origin)=="Vector3" and typeof(direction)=="Vector3"
+						and direction.Magnitude>15 and wallshotOriginNear(origin) then
+						local inc=buildCharInclude()
+						if #inc>0 then
+							local rp=RaycastParams.new()
+							rp.FilterType=Enum.RaycastFilterType.Include
+							rp.RespectCanCollide=false
+							rp.FilterDescendantsInstances=inc
+							wsBypass=true
+							local okc,hit=pcall(W.Raycast,W,origin,direction,rp)
+							wsBypass=false
+							if okc and hit then return hit end
+						end
+					end
+				elseif m=="FindPartOnRay" or m=="FindPartOnRayWithIgnoreList" then
+					local ray=...
+					if typeof(ray)=="Ray" and ray.Direction.Magnitude>15 and wallshotOriginNear(ray.Origin) then
+						local inc=buildCharInclude()
+						if #inc>0 then
+							local rp=RaycastParams.new()
+							rp.FilterType=Enum.RaycastFilterType.Include
+							rp.RespectCanCollide=false
+							rp.FilterDescendantsInstances=inc
+							wsBypass=true
+							local okc,hit=pcall(W.Raycast,W,ray.Origin,ray.Direction,rp)
+							wsBypass=false
+							if okc and hit then
+								return hit.Instance,hit.Position,hit.Normal,hit.Material
+							end
+						end
+					end
+				end
+			end
+
+			-- сайлент аим: подмена аргументов ремоутов
+			if silentTarget and SA.enabled then
+				if (m=="FireServer" or m=="InvokeServer") and holdingWeapon()
+					and math.random(1,100)<=SA.chance and remoteAllowed(self) then
+					local args={...}
+					local mod=false
+					for i=1,#args do
+						local v=args[i]
+						if typeof(v)=="Vector3" then
+							args[i]=silentTarget.pos mod=true
+						elseif typeof(v)=="CFrame" and (silentTarget.pos-v.Position).Magnitude>0.01 then
+							args[i]=CFrame.lookAt(v.Position,silentTarget.pos) mod=true
+						end
+					end
+					if mod then
+						return old(self,table.unpack(args))
+					end
+				end
+			end
+
+			return old(self,...)
+		end))
+	end)
+	if ok then print("[Finis] namecall hook OK — antikick + wallshot + silentaim armed")
+	else warn("[Finis] namecall hook FAILED — executor блокирует hookmetamethod") end
+else
+	warn("[Finis] hookmetamethod/getnamecallmethod недоступны — анти-кик, валлшот и сайлент аим неактивны")
+end
+
+-- спуф мыши для игр, читающих Mouse.Hit / Mouse.Target
+if hookmetamethod then
+	local ok=pcall(function()
+		local old=hookmetamethod(game,"__index",closure(function(self,k)
+			if silentTarget and SA.enabled and (k=="Hit" or k=="Target" or k=="UnitRay") and self==Mouse then
+				if k=="Hit" then
+					local c=cam()
+					local o=c and c.CFrame.Position or Vector3.new(0,0,0)
+					local d=silentTarget.pos-o
+					if d.Magnitude<0.001 then d=Vector3.new(0,0,-1) end
+					return CFrame.lookAt(silentTarget.pos,silentTarget.pos+d.Unit)
+				elseif k=="Target" then
+					return silentTarget.part
+				else
+					local c=cam()
+					local o=c and c.CFrame.Position or Vector3.new(0,0,0)
+					local d=silentTarget.pos-o
+					if d.Magnitude<0.001 then d=Vector3.new(0,0,-1) end
+					return Ray.new(o,d.Unit)
+				end
+			end
+			return old(self,k)
+		end))
+	end)
+	if ok then print("[Finis] mouse hook OK") else warn("[Finis] mouse hook failed") end
+end
+
+-- =========================================================
+-- AIMBOT — камера + обновление silent-цели
+-- =========================================================
+local aimLockPlr=nil
+R.RenderStepped:Connect(function()
+	if SA.enabled then
+		local t=acquireTarget(SA.fov,true,SA.wall,SA.bone)
+		if t then
+			local ping=LP:GetNetworkPing()
+			silentTarget={plr=t.plr,char=t.char,part=t.part,pos=predictPart(t.part,SA.pred+ping)}
+		else
+			silentTarget=nil
+		end
+	else
+		silentTarget=nil
+	end
+
+	if AB.enabled then
+		local t=nil
+		if AB.lock and aimLockPlr then
+			local ch=aimLockPlr.Character
+			local hum=ch and ch:FindFirstChildOfClass("Humanoid")
+			if ch and hum and hum.Health>0 then
+				local part=getBonePart(ch,AB.bone)
+				local c=cam()
+				if part and c then
+					local sp,on=c:WorldToViewportPoint(part.Position)
+					local vp=c.ViewportSize
+					if on and sp.Z>0 then
+						local d=(Vector2.new(sp.X,sp.Y)-Vector2.new(vp.X*0.5,vp.Y*0.5)).Magnitude
+						if d<AB.fov*1.8 and (not AB.wall or partVisible(part,ch)) then
+							t={plr=aimLockPlr,char=ch,part=part}
+						end
+					end
+				end
+			else
+				aimLockPlr=nil
+			end
+		end
+		if not t then t=acquireTarget(AB.fov,false,AB.wall,AB.bone) end
+		if t then
+			aimLockPlr=t.plr
+			local c=cam()
+			if c then
+				local ping=LP:GetNetworkPing()
+				local pos=predictPart(t.part,AB.pred+ping)
+				local goal=CFrame.lookAt(c.CFrame.Position,pos)
+				local a=math.clamp(AB.smooth,0.05,1)
+				if a>=0.99 then c.CFrame=goal else c.CFrame=c.CFrame:Lerp(goal,a) end
+			end
+		end
+	end
+end)
+
+-- =========================================================
+-- HITBOX EXPANDER + визуальный превью
+-- =========================================================
+local hbOrig={}
+task.spawn(function()
+	while G and G.Parent do
+		if HB.enabled then
+			for _,p in ipairs(P:GetPlayers()) do
+				if p~=LP and isEnemy(p) then
+					local ch=p.Character
+					if ch then
+						local targets={}
+						if HB.part=="All" then
+							for _,d in ipairs(ch:GetChildren()) do
+								if d:IsA("BasePart") then table.insert(targets,d) end
+							end
+						else
+							local prt=ch:FindFirstChild(HB.part)
+							if prt and prt:IsA("BasePart") then table.insert(targets,prt) end
+						end
+						for _,prt in ipairs(targets) do
+							if not hbOrig[prt] then
+								hbOrig[prt]={size=prt.Size,tr=prt.Transparency,color=prt.Color,mat=prt.Material,vis=false}
+							end
+							local o=hbOrig[prt]
+							pcall(function() prt.Size=Vector3.new(HB.size,HB.size,HB.size) end)
+							if HB.show and not o.vis then
+								o.vis=true
+								pcall(function()
+									prt.Transparency=0.65
+									prt.Color=Color3.fromRGB(255,60,60)
+									prt.Material=Enum.Material.Neon
+								end)
+							elseif not HB.show and o.vis then
+								o.vis=false
+								pcall(function()
+									prt.Transparency=o.tr
+									prt.Color=o.color
+									prt.Material=o.mat
+								end)
+							end
+						end
+					end
+				end
+			end
+		end
+		for prt,orig in pairs(hbOrig) do
+			if not prt.Parent then
+				hbOrig[prt]=nil
+			elseif not HB.enabled then
+				pcall(function()
+					prt.Size=orig.size
+					prt.Transparency=orig.tr
+					prt.Color=orig.color
+					prt.Material=orig.mat
+				end)
+				hbOrig[prt]=nil
+			end
+		end
+		task.wait(0.3)
+	end
+end)
+
+-- =========================================================
+-- TRIGGERBOT
+-- =========================================================
 local lastF=0
 local function getAny(fv)
 	local c=cam()
@@ -1494,13 +1940,17 @@ R.Heartbeat:Connect(function()
 end)
 
 R.RenderStepped:Connect(function()
-	local a,r=false,0
-	if CB.tb then a=true r=math.max(r,CB.tbFov) end
-	FOV.Visible=a and CB.showFov
+	local r=0
+	if CB.tb then r=math.max(r,CB.tbFov) end
+	if AB.enabled then r=math.max(r,AB.fov) end
+	if SA.enabled then r=math.max(r,SA.fov) end
+	FOV.Visible=r>0 and CB.showFov
 	if r>0 then FOV.Size=UDim2.fromOffset(r*2,r*2) end
 end)
 
--- TRACER / SWITCH / AMMO
+-- =========================================================
+-- TRACER / SWITCH / TOOL HOOKS
+-- =========================================================
 local TRC=Instance.new("Folder")
 TRC.Name="FinisTracers" TRC.Parent=W
 local lastT=0
@@ -1535,8 +1985,7 @@ local function fastSwitchWeapon()
 	if not ch then return end
 	local current=ch:FindFirstChildOfClass("Tool")
 	local bp=LP:FindFirstChild("Backpack")
-	if not bp then return end
-	local tools={}
+	if not bp then return end	local tools={}
 	for _,t in ipairs(bp:GetChildren()) do
 		if t:IsA("Tool") and (not current or t.Name~=current.Name) then table.insert(tools,t) end
 	end
@@ -1587,6 +2036,174 @@ end
 hookBP(LP:FindFirstChild("Backpack"))
 LP.ChildAdded:Connect(function(c) if c.Name=="Backpack" then hookBP(c) end end)
 
+-- =========================================================
+-- AMMO — Values + атрибуты + свап-байпас
+-- =========================================================
+local function isAmmoName(n)
+	n=string.lower(n)
+	if n:find("ammo",1,true) or n:find("magazine",1,true) or n:find("clip",1,true)
+		or n:find("bullet",1,true) or n:find("shell",1,true) or n:find("shot",1,true) then
+		return true
+	end
+	return false
+end
+local function isReloadName(n)
+	return string.lower(n):find("reload",1,true)~=nil
+end
+
+local function findAmmoValue(tool)
+	if not tool then return nil end
+	for _,d in ipairs(tool:GetDescendants()) do
+		if (d:IsA("IntValue") or d:IsA("NumberValue")) and isAmmoName(d.Name) then return d end
+	end
+	return nil
+end
+
+local function ammoDiag()
+	local found={}
+	local ch=LP.Character
+	local bp=LP:FindFirstChild("Backpack")
+	for _,root in ipairs({ch,bp}) do
+		if root then
+			for _,d in ipairs(root:GetDescendants()) do
+				if (d:IsA("IntValue") or d:IsA("NumberValue")) and isAmmoName(d.Name) then
+					table.insert(found,d:GetFullName())
+				end
+			end
+		end
+	end
+	local attrs=0
+	if ch then
+		local tool=ch:FindFirstChildOfClass("Tool")
+		if tool then
+			for k in pairs(tool:GetAttributes()) do
+				if isAmmoName(k) then attrs=attrs+1 end
+			end
+		end
+	end
+	if #found>0 or attrs>0 then
+		print("[Finis] ammo detected: "..#found.." values, "..attrs.." attrs")
+		for _,f in ipairs(found) do print("  -> "..f) end
+	else
+		warn("[Finis] ammo values NOT FOUND — игра считает патроны на сервере, клиентский фриз не применится")
+	end
+end
+
+local lastSwap=0
+local function swapBypass(tool)
+	if os.clock()-lastSwap<0.6 then return end
+	lastSwap=os.clock()
+	local ch=LP.Character
+	local h=ch and ch:FindFirstChildOfClass("Humanoid")
+	if not h or not tool or not tool.Parent then return end
+	pcall(function()
+		h:UnequipTools()
+		task.wait(0.06)
+		h:EquipTool(tool)
+	end)
+end
+
+task.spawn(function()
+	while G and G.Parent do
+		if CB.ammo or CB.noreload then
+			local ch=LP.Character
+			local bp=LP:FindFirstChild("Backpack")
+			local roots={}
+			if ch then table.insert(roots,ch) end
+			if bp then table.insert(roots,bp) end
+			for _,root in ipairs(roots) do
+				for _,d in ipairs(root:GetDescendants()) do
+					if d:IsA("Tool") then
+						if CB.ammo then
+							for k,v in pairs(d:GetAttributes()) do
+								if typeof(v)=="number" and isAmmoName(k) and v<AMMO.value then
+									pcall(function() d:SetAttribute(k,AMMO.value) end)
+								end
+							end
+						end
+						if CB.noreload then
+							for k,v in pairs(d:GetAttributes()) do
+								if isReloadName(k) then
+									if typeof(v)=="boolean" and v then
+										pcall(function() d:SetAttribute(k,false) end)
+									elseif typeof(v)=="number" and v>0 then
+										pcall(function() d:SetAttribute(k,0) end)
+									end
+								end
+							end
+						end
+					elseif d:IsA("IntValue") or d:IsA("NumberValue") then
+						if CB.ammo and isAmmoName(d.Name) and d.Value<AMMO.value then
+							pcall(function() d.Value=AMMO.value end)
+						end
+						if CB.noreload and isReloadName(d.Name) and d.Value>0 then
+							pcall(function() d.Value=0 end)
+						end
+					elseif d:IsA("BoolValue") then
+						if CB.noreload and isReloadName(d.Name) and d.Value then
+							pcall(function() d.Value=false end)
+						end
+					end
+				end
+			end
+			if CB.noreload and AMMO.swap and ch then
+				local tool=ch:FindFirstChildOfClass("Tool")
+				if tool then
+					local av=findAmmoValue(tool)
+					if av and av.Value<=AMMO.threshold then
+						task.spawn(swapBypass,tool)
+					else
+						local lowAttr=false
+						for k,v in pairs(tool:GetAttributes()) do
+							if typeof(v)=="number" and isAmmoName(k) and v<=AMMO.threshold then lowAttr=true break end
+						end
+						if lowAttr then task.spawn(swapBypass,tool) end
+					end
+				end
+			end
+		end
+		task.wait(0.2)
+	end
+end)
+
+-- =========================================================
+-- BURST FIRE — вся обойма за ~1 секунду
+-- читает размер обоймы из ammo value (MP5=25, дробаш=6, АК=30 — что найдёт, то и выльет)
+-- если value нет — жмёт Activate 35 раз, дебаунс игры сам ограничит
+-- =========================================================
+local function burstFire()
+	if BR.busy then return end
+	local ch=LP.Character
+	local tool=ch and ch:FindFirstChildOfClass("Tool")
+	if not tool then
+		pcall(function() SG:SetCore("SendNotification",{Title="Finis",Text="no weapon",Duration=1.5}) end)
+		return
+	end
+	BR.busy=true
+	task.spawn(function()
+		local av=findAmmoValue(tool)
+		local count=av and av.Value or 0
+		if count<=0 then count=35 end
+		count=math.clamp(count,1,60)
+		local delay=1/math.clamp(BR.rate,5,50)
+		local fired=0
+		for i=1,count do
+			local c2=LP.Character
+			if not c2 then break end
+			local t2=c2:FindFirstChildOfClass("Tool")
+			if t2~=tool then break end
+			local av2=findAmmoValue(tool)
+			if av2 and av2.Value<=0 and fired>0 then break end
+			pcall(function() tool:Activate() end)
+			fired=fired+1
+			task.wait(delay)
+		end
+		BR.busy=false
+		pcall(function() SG:SetCore("SendNotification",{Title="Finis",Text="burst: "..fired.." shots",Duration=1.5}) end)
+	end)
+end
+
+-- SPEED
 R.Heartbeat:Connect(function()
 	if not CB.maxSpd then return end
 	local ch=LP.Character
@@ -1600,42 +2217,9 @@ R.Heartbeat:Connect(function()
 	end
 end)
 
-task.spawn(function()
-	while G and G.Parent do
-		local ch=LP.Character
-		if ch then
-			for _,t in ipairs(ch:GetChildren()) do
-				if t:IsA("Tool") then
-					if CB.ammo then
-						for k,v in pairs(t:GetAttributes()) do
-							if typeof(v)=="number" and v<999 then
-								local l=string.lower(k)
-								if l:find("ammo") or l:find("clip") or l:find("mag") then
-									pcall(function() t:SetAttribute(k,999) end)
-								end
-							end
-						end
-					end
-					if CB.noreload then
-						for k,v in pairs(t:GetAttributes()) do
-							local l=string.lower(k)
-							if l:find("reload") then
-								if typeof(v)=="boolean" and v then
-									pcall(function() t:SetAttribute(k,false) end)
-								elseif typeof(v)=="number" and v>0 then
-									pcall(function() t:SetAttribute(k,0) end)
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-		task.wait(0.25)
-	end
-end)
-
+-- =========================================================
 -- PAGES
+-- =========================================================
 do
 	local p=NP.Visuals
 	addSec(p,1,"sec_esp")
@@ -1645,7 +2229,7 @@ do
 	addToggle(c,3,"esp_txt","",true,function(o) CB.espText=o end)
 	addToggle(c,4,"esp_hp","",true,function(o) CB.espHP=o end)
 	addToggle(c,5,"esp_arrows","",true,function(o) CB.arrows=o end)
-	addSlider(c,6,"esp_arad",60,300,165," px",function(v) CB.arrowRad=math.floor(v+.5) end) -- FIX: отдельный радиус стрелок
+	addSlider(c,6,"esp_arad",60,300,165," px",function(v) CB.arrowRad=math.floor(v+.5) end)
 	addSelector(c,7,"esp_col",{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},
 		{"Pink","Red","Blue","Green","Purple","Yellow","Cyan","White"},1,function(v) CB.espCol=v end)
 	addSelector(c,8,"esp_style",ESP_STYLES,ESP_STYLES,1,function(v) CB.espStyle=v end)
@@ -1665,14 +2249,38 @@ end
 
 do
 	local p=NP.AimBot
-	addSec(p,1,"sec_trigger")
-	local c=addCard(p,2)
+
+	addSec(p,1,"sec_aimbot")
+	local c0=addCard(p,2)
+	addToggle(c0,1,"ab_en","",false,function(o) AB.enabled=o if not o then aimLockPlr=nil end end)
+	addSlider(c0,2,"ab_fov",30,600,180," px",function(v) AB.fov=math.floor(v+.5) end)
+	addSlider(c0,3,"ab_smooth",5,100,45,"%",function(v) AB.smooth=math.floor(v+.5)/100 end)
+	addSelector(c0,4,"ab_bone",{"Head","Torso","HumanoidRootPart","Random"},
+		{"bone_head","bone_torso","bone_root","bone_random"},1,function(v) AB.bone=v end)
+	addToggle(c0,5,"ab_wall","",false,function(o) AB.wall=o end)
+	addSlider(c0,6,"ab_pred",0,40,10,"",function(v) AB.pred=v/100 end)
+	addToggle(c0,7,"ab_lock","",true,function(o) AB.lock=o end)
+
+	addSec(p,3,"sec_silent")
+	local c1=addCard(p,4)
+	addToggle(c1,1,"sa_en","",false,function(o) SA.enabled=o if not o then silentTarget=nil end end)
+	addSlider(c1,2,"sa_fov",30,800,200," px",function(v) SA.fov=math.floor(v+.5) end)
+	addSelector(c1,3,"sa_bone",{"Head","Torso","HumanoidRootPart","Random"},
+		{"bone_head","bone_torso","bone_root","bone_random"},1,function(v) SA.bone=v end)
+	addToggle(c1,4,"sa_wall","",false,function(o) SA.wall=o end)
+	addSlider(c1,5,"sa_chance",1,100,100,"%",function(v) SA.chance=math.floor(v+.5) end)
+	addSlider(c1,6,"sa_pred",0,40,10,"",function(v) SA.pred=v/100 end)
+	addSelector(c1,7,"sa_mode",{"Smart","All"},{"sa_smart","sa_all"},1,function(v) SA.mode=v end)
+
+	addSec(p,5,"sec_trigger")
+	local c=addCard(p,6)
 	addToggle(c,1,"t_on","tg_en",false,function(o) CB.tb=o end)
 	addToggle(c,2,"t_on","tg_aim",false,function(o) CB.tbAim=o end)
 	addSlider(c,3,"tg_fov",40,500,140," px",function(v) CB.tbFov=v end)
 	addSlider(c,4,"tg_delay",200,900,350," ms",function(v) CB.tbDel=v/1000 end)
-	addSec(p,5,"sec_spin")
-	local c2=addCard(p,6)
+
+	addSec(p,7,"sec_spin")
+	local c2=addCard(p,8)
 	addToggle(c2,1,"t_on","sp_en",false,function(o)
 		CB.spin=o
 		local ch=LP.Character local h=ch and ch:FindFirstChildOfClass("Humanoid")
@@ -1693,30 +2301,55 @@ do
 	addSlider(c1,2,"ms_val",16,30,20,"",function(v) CB.msVal=math.floor(v+.5) end)
 	addToggle(c1,3,"nc_en","",false,function(o) CB.noclip=o end)
 	addToggle(c1,4,"aj_en","",false,function(o) CB.air=o end)
+
 	addSec(p,3,"sec_flight")
 	local c2=addCard(p,4)
 	addToggle(c2,1,"fl_en","",false,function(o) CB.fly=o end)
 	addSlider(c2,2,"fl_spd",10,60,30,"",function(v) CB.flySpd=math.floor(v+.5) end)
 	addSelector(c2,3,"fl_mode",{"Camera","Vertical"},{"fl_cam","fl_vert"},1,function(v) CB.flyMode=v end)
+
 	addSec(p,5,"sec_vehicle")
 	local c3=addCard(p,6)
 	addToggle(c3,1,"ch_en","",false,function(o) CB.carHack=o end)
 	addSlider(c3,2,"ch_spd",50,1000,300,"",function(v) CB.carSpd=math.floor(v+.5) end)
+
+	addSec(p,7,"sec_hitbox")
+	local c4=addCard(p,8)
+	addToggle(c4,1,"hb_en","",false,function(o) HB.enabled=o end)
+	addSlider(c4,2,"hb_size",2,50,8,"",function(v) HB.size=math.floor(v+.5) end)
+	addSelector(c4,3,"hb_part",{"HumanoidRootPart","Head","All"},{"hb_hrp","hb_head","hb_all"},1,function(v) HB.part=v end)
+	addToggle(c4,4,"hb_show","",false,function(o) HB.show=o end)
 end
 
 do
 	local p=NP.Guns
 	addSec(p,1,"sec_ammo")
 	local c1=addCard(p,2)
-	addToggle(c1,1,"am_en","",false,function(o) CB.ammo=o end)
-	addToggle(c1,2,"nr_en","",false,function(o) CB.noreload=o end)
-	addSec(p,3,"sec_fswitch")
-	local c2=addCard(p,4)
+	addToggle(c1,1,"am_en","",false,function(o) CB.ammo=o if o then task.spawn(ammoDiag) end end)
+	addToggle(c1,2,"nr_en","",false,function(o) CB.noreload=o if o then task.spawn(ammoDiag) end end)
+	addSlider(c1,3,"am_val",10,99999,9999,"",function(v) AMMO.value=math.floor(v+.5) end)
+	addToggle(c1,4,"am_swap","",true,function(o) AMMO.swap=o end)
+	addSlider(c1,5,"am_thresh",0,20,2,"",function(v) AMMO.threshold=math.floor(v+.5) end)
+
+	addSec(p,3,"sec_burst")
+	local cb_=addCard(p,4)
+	addBtn(cb_,1,"burst_fire",function() task.spawn(burstFire) end)
+	addSlider(cb_,2,"burst_rate",10,40,30,"",function(v) BR.rate=math.floor(v+.5) end)
+
+	addSec(p,5,"sec_wall")
+	local cw=addCard(p,6)
+	addToggle(cw,1,"ws_en","",false,function(o) WS.enabled=o end)
+	addToggle(cw,2,"ws_npc","",true,function(o) WS.npc=o end)
+
+	addSec(p,7,"sec_fswitch")
+	local c2=addCard(p,8)
 	addToggle(c2,1,"fs_en","",false,function(o) CB.fastSwitch=o end)
 	addSlider(c2,2,"fs_delay",0,500,50," ms",function(v) CB.fsDelay=v/1000 end)
-	addSec(p,5,"sec_sound")
-	local c3=addCard(p,6)
+
+	addSec(p,9,"sec_sound")
+	local c3=addCard(p,10)
 	addToggle(c3,1,"snd_en","",false,function(o) CB.gunSound=o end)
+	addBtn(c3,2,"snd_test",function() playGunSound(true) end)
 end
 
 do
@@ -1725,8 +2358,13 @@ do
 	local c1=addCard(p,2)
 	addSlider(c1,1,"ui_scale",60,150,100,"%",function(v) MSC.Scale=v/100 end)
 	addToggle(c1,2,"fov_circle","",true,function(o) CB.showFov=o end)
-	addSec(p,3,"sec_lang")
-	local c2=addCard(p,4)
+
+	addSec(p,3,"sec_prot")
+	local cp=addCard(p,4)
+	addToggle(cp,1,"ak_en","",true,function(o) AK.enabled=o end)
+
+	addSec(p,5,"sec_lang")
+	local c2=addCard(p,6)
 	addSelector(c2,1,"lang_choose",{"en","ru"},{"English","Русский"},1,function(v)
 		Lang=v refreshLang()
 	end)
@@ -1762,6 +2400,9 @@ U.InputBegan:Connect(function(input,gp)
 		CB.fly=not CB.fly
 		pcall(function() SG:SetCore("SendNotification",{Title="Fly",Text=CB.fly and "ON" or "OFF",Duration=2}) end)
 	end
+	if input.KeyCode==Enum.KeyCode.G then
+		task.spawn(burstFire)
+	end
 end)
 
 for n,o in pairs(NB) do
@@ -1774,13 +2415,15 @@ if NP[SEL] then NP[SEL].Position=UDim2.fromOffset(0,0) end
 refreshLang()
 
 if getgenv then
-	getgenv().FinisHub={Combat=CB,GUI=G,Main=MENU,
+	getgenv().FinisHub={Combat=CB,Aimbot=AB,SilentAim=SA,Hitbox=HB,Ammo=AMMO,Wallshot=WS,Burst=BR,AntiKick=AK,
+		GUI=G,Main=MENU,
 		OpenMenu=openMenu,CloseMenu=closeMenu,
 		SetLang=function(l) Lang=l refreshLang() end,
-		TestSound=function() pcall(function() local s=gunSoundTemplate:Clone() s.Parent=SS s:Play() Debris:AddItem(s,3) end) end}
+		TestSound=function() playGunSound(true) end,
+		BurstFire=burstFire}
 	getgenv().FinisToggleMenu=function()
 		if menuOpen then closeMenu() else openMenu() end
 	end
 end
 
-print("[Finis] v6.1 READY — RSHIFT=menu, F=fly")
+print("[Finis] v8 READY — RSHIFT=menu, F=fly, G=burst")
